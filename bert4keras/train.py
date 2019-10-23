@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 # 训练相关
 
-from keras.optimizers import Optimizer
-import keras.backend as K
+from .backend import keras, K
+
+# 等价于 from keras.optimizers import Optimizer
+globals()['Optimizer'] = keras.optimizers.__dict__['Optimizer']
 
 
 class PiecewiseLinearLearningRate(Optimizer):

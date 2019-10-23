@@ -3,9 +3,13 @@
 
 import numpy as np
 import tensorflow as tf
-import keras.backend as K
-from keras.layers import *
-from keras.models import Model
+from .backend import keras, K
+from distutils.version import LooseVersion
+
+# 等价于 from keras.layers import *
+globals().update(keras.layers.__dict__)
+# 等价于 from keras.models import Model
+globals()['Model'] = keras.models.__dict__['Model']
 
 
 """提供gelu版本切换功能
@@ -14,6 +18,7 @@ gelu有两个实现版本，一是利用Erf直接计算，
 官方早期放出的代码是用Erf函数实现的，但当
 前的官方代码已经改为了Tanh版本。
 """
+
 
 def gelu_erf(x):
     return 0.5 * x * (1.0 + tf.math.erf(x / np.sqrt(2.0)))
@@ -70,6 +75,13 @@ class OurLayer(Layer):
                 input_shape = K.int_shape(inputs)
             layer.build(input_shape)
         outputs = layer.call(*args, **kwargs)
+        if LooseVersion(keras.__version__) >= LooseVersion('2.3.0')\
+                or 'tf' in keras.__version__:
+            """Keras 2.3.x 引入了_layers属性，可以直接追踪使用过的层，
+            从而不需要自定义OurLayer就可以实现“层中层”的效果了。目前保留
+            OurLayer仅仅是为了兼容旧版本，后续可能会不再支持2.3之前版本。
+            """
+            return outputs
         for w in layer.trainable_weights:
             if w not in self._trainable_weights:
                 self._trainable_weights.append(w)
