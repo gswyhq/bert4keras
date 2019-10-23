@@ -9,6 +9,7 @@ import sys
 import json
 import pickle
 import math
+import unicodedata
 import copy
 import re
 import itertools
@@ -26,15 +27,18 @@ from keras.callbacks import EarlyStopping, ModelCheckpoint
 from keras.callbacks import TensorBoard
 from keras.layers import Input, Embedding, LSTM, Dense, Layer
 import keras.backend as K
+from keras.layers.normalization import BatchNormalization
 from keras.models import Model
 import keras
 from keras.utils.np_utils import to_categorical
 from keras.utils import plot_model
-sys.path.append('.')
-from config import model_save_path, log_dir, TERM_FREQUENCY_FILE
-
 import tensorflow as tf
 from keras.backend.tensorflow_backend import set_session
+from gensim.models import KeyedVectors
+from keras.optimizers import Adam
+
+sys.path.append('.')
+from config import model_save_path, log_dir, TERM_FREQUENCY_FILE, WORD_EMBEDDING_FILE
 
 # 禁用GPU
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"   # see issue #152
@@ -147,7 +151,7 @@ class Data_set:
         with open(data_path, "r") as f:
             text = f.readline()
             while text:
-                text = text.strip()
+                text = unicodedata.normalize('NFKD', text).strip()
                 if '/' in text:
                     text = text.strip()
                     data = [[word.rsplit('/', maxsplit=1) for word in text.rsplit('\t', maxsplit=1)[0].split() if
@@ -263,7 +267,7 @@ class Data_set:
             with open(temp_data_file, "r") as f:
                 text = f.readline()
                 while text:
-                    text = text.strip()
+                    text = unicodedata.normalize('NFKD', text).strip()
                     if '/' in text:
                         word_flag, rel_tag = [[word.rsplit('/', maxsplit=1) for word in text.rsplit('\t', maxsplit=1)[0].split() if
                               word[1] == '/'], text.rsplit('\t', maxsplit=1)[-1]]
@@ -350,22 +354,54 @@ class Attention(Layer):
     def compute_output_shape(self, input_shape):
         return (input_shape[0],input_shape[1],self.output_dim)
 
-def build_model(input_length, input_dim, ner_units=None, rel_units=None, output_dim=200):
+def get_not_present_word_vectors(low=0.0, high=1.0, size=None, normalize=False):
+    """
+    随机初始化一个向量
+    :param low: 向量最小值
+    :param high: 向量元素最大值
+    :param size: 向量长度
+    :param normalize: 是否正则化
+    :return:
+    """
+    vec = np.random.uniform(low=low, high=high, size=size)
+    if normalize:
+        # 所有值都除以l2范数（平方和再开方）
+        vec /= np.linalg.norm(vec, ord=2)
+
+    return vec
+
+def load_word_embedding_weights(word_embedding_file):
+    wv_from_text = KeyedVectors.load_word2vec_format(word_embedding_file, binary=False)
+    words = wv_from_text.wv.index2word
+    word_embedding_weights = np.array([wv_from_text.get_vector(word) for word in words], dtype='float32', copy=False)
+    return word_embedding_weights
+
+def build_model(input_length, input_dim, ner_units=None, rel_units=None, output_dim=200, word_embedding_weights=None, train_word_embeddings=False):
     # construct model
     input = Input((input_length,), dtype='int32', name='input')
 
-    x = Embedding(output_dim=output_dim, input_dim=input_dim, input_length=input_length, mask_zero=True)(input)
+    if word_embedding_weights is None:
+        x = Embedding(output_dim=output_dim, input_dim=input_dim, input_length=input_length, mask_zero=True)(input)
+    else:
+        x = Embedding(input_dim=word_embedding_weights.shape[0],
+                               output_dim=word_embedding_weights.shape[1],
+                               weights=[word_embedding_weights],
+                               trainable=train_word_embeddings,
+                               name='WordEmbedding')(input)
+    x = BatchNormalization()(x)
     lstm_out = Bidirectional(LSTM(100, return_sequences=True))(x)
     dense = Dense(200, activation='relu')(lstm_out)
+    dense = BatchNormalization()(dense)
     ner_out = CRF(ner_units, sparse_target=True, name='ner_out')(dense)
     # dense = Lambda(lambda x: x, output_shape=lambda s: s)(dense)
     # attention_out = Attention(200, name='attention_1')(dense)
     lambda_out = Lambda(lambda x: x[:, 0])(dense)
+    lambda_out = BatchNormalization()(lambda_out)
     rel_out = Dense(rel_units, activation='softmax', name='rel_out')(lambda_out)
 
     model = Model(inputs=[input], outputs=[ner_out, rel_out])
     # model.compile(optimizer='rmsprop', loss='binary_crossentropy', loss_weights=[1., 0.2])
-    model.compile(optimizer='adam',
+    model.compile(optimizer=Adam(lr=1e-4),
                   loss={'ner_out': crf_loss, 'rel_out': 'categorical_crossentropy'},
                   metrics = {'ner_out': crf_accuracy, 'rel_out': 'accuracy'},
                   loss_weights={'ner_out': 0.5, 'rel_out': 0.5}
@@ -379,16 +415,22 @@ def build_model(input_length, input_dim, ner_units=None, rel_units=None, output_
 
 def train(batch_size=32, input_length = 200, epochs=EPOCHS):
     pre_data = Data_set()
+    wv_from_text = KeyedVectors.load_word2vec_format(WORD_EMBEDDING_FILE, binary=False)
     word2id, flag2id, rel2id = pre_data.save_vocab(model_save_path,
                                                    itertools.chain(pre_data.generator_load_data(TRAIN_DATA_PATH, data_type='train'),
                                                                    pre_data.generator_load_data(DEV_DATA_PATH, data_type='dev')))
+
+
+
+    word_embedding_weights = np.array([wv_from_text.get_vector(word) if word in wv_from_text.index2word else get_not_present_word_vectors(low=-2, high=2, size=wv_from_text.vectors.shape[-1]) for word, _ in sorted(word2id.items(), key=lambda x:x[1])], dtype='float32', copy=False)
+    del wv_from_text
 
     print("训练集数据量：{}，验证集数据量：{}".format(pre_data.train_count, pre_data.dev_count))
     print('单词数： {}， 实体类别数：{}， 关系数：{}'.format(len(word2id), len(flag2id), len(rel2id)))
     steps_per_epoch = math.ceil(pre_data.train_count / batch_size)
     validation_steps = math.ceil(pre_data.dev_count / batch_size)
 
-    model = build_model(input_length, input_dim=len(word2id), ner_units=len(flag2id), rel_units=len(rel2id), output_dim=200)
+    model = build_model(input_length, input_dim=len(word2id), ner_units=len(flag2id), rel_units=len(rel2id), output_dim=200, word_embedding_weights=word_embedding_weights, train_word_embeddings=True)
 
     early_stopping = EarlyStopping(monitor='val_loss', patience=3)
 
@@ -519,7 +561,7 @@ def predict(data, input_length=200):
 
     id2flag = {v: k for k, v in flag2id.items()}
     id2rel = {v: k.strip() for k, v in rel2id.items()}
-    sen2id = [[word2id.get(char, 0) for char in sen] for sen in data]
+    sen2id = [[word2id.get(char, 0) for char in unicodedata.normalize('NFKD', sen)] for sen in data]
 
     sen_pad = pad_sequences(sen2id, input_length)
 

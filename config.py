@@ -14,6 +14,7 @@ dict_path = os.path.join(albert_model_path, 'vocab.txt')
 
 # albert_model_path = './albert_tiny'
 # config_path = os.path.join(albert_model_path, 'albert_config_tiny.json')
+WORD_EMBEDDING_FILE = './data/Tencent_char_Embedding.txt'
 
 model_save_path = './models'
 log_dir = './logs'
