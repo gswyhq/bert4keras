@@ -1,5 +1,5 @@
 #! -*- coding:utf-8 -*-
-# 情感分析类似，加载albert_zh权重(https://github.com/brightmart/albert_zh)
+# 语义相似性判断
 
 import json
 import numpy as np
@@ -24,7 +24,7 @@ from bert4keras.bert import load_pretrained_model, set_gelu
 from bert4keras.utils import SimpleTokenizer, load_vocab
 # from bert4keras.train import PiecewiseLinearLearningRate
 from bert4keras.layers import FactorizedEmbedding
-
+from config import albert_model_path, config_path, checkpoint_path, dict_path, model_save_path, log_dir
 set_gelu('tanh') # 切换gelu版本
 
 # 禁用GPU
@@ -33,53 +33,40 @@ os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 maxlen = 100
 
-# albert_config_large.json  albert_model.ckpt.data-00000-of-00001  albert_model.ckpt.index  albert_model.ckpt.meta  checkpoint  vocab.txt
-albert_model_path = '/home/gswyhq/github_projects/albert_zh/albert_large_zh'
-# albert_model_path = '/notebooks/albert_zh/albert_large_zh'
-# https://storage.googleapis.com/albert_zh/albert_large_zh.zip
+TRAIN_DATA_PATH = "/home/gswyhq/data/LCQMC/train.txt"
+DEV_DATA_PATH = "/home/gswyhq/data/LCQMC/dev.txt"
+TEST_DATA_PATH = "/home/gswyhq/data/LCQMC/test.txt"
 
-config_path = os.path.join(albert_model_path, 'albert_config_large.json')
-checkpoint_path = os.path.join(albert_model_path, 'albert_model.ckpt')
-dict_path = os.path.join(albert_model_path, 'vocab.txt')
+def read_data(file_name):
+    with open(file_name, encoding='utf-8')as f:
+        datas = f.readlines()
 
-model_save_path = './models'
-log_dir = './logs'
+    datas = [t.split() for t in datas if t]
+    datas = [[t[0], t[1], int(t[2])] for t in datas if len(t) == 3 and t[-1] in ['0', '1']]
+    random.shuffle(datas)
+    return datas
 
-def process_data(neg_file='datasets/neg.xls', pos_file='datasets/pos.xls'):
-    neg = pd.read_excel(neg_file, header=None)
-    pos = pd.read_excel(pos_file, header=None)
-    chars = {}
+def process_data(train_file, dev_file, test_file):
+    chars = set()
 
-
-    data = []
-
-    for d in neg[0]:
-        data.append((d, 0))
-        for c in d:
-            chars[c] = chars.get(c, 0) + 1
-
-    for d in pos[0]:
-        data.append((d, 1))
-        for c in d:
-            chars[c] = chars.get(c, 0) + 1
-
-    chars = {i: j for i, j in chars.items() if j >= 4}
-
+    train_datas = read_data(train_file)
+    dev_datas = read_data(dev_file)
+    test_datas = read_data(test_file)
+    for text1, text2, label in train_datas + dev_datas:
+        chars.update(set(text1))
+        chars.update(set(text2))
 
     _token_dict = load_vocab(dict_path) # 读取词典
-    token_dict, keep_words = {}, set()
+    token_dict, keep_words = {}, []
 
     for c in ['[PAD]', '[UNK]', '[CLS]', '[SEP]', '[unused1]']:
         token_dict[c] = len(token_dict)
-        keep_words.add(_token_dict[c])
+        keep_words.append(_token_dict[c])
 
     for c in chars:
         if c in _token_dict:
             token_dict[c] = len(token_dict)
-            keep_words.add(_token_dict[c])
-
-    keep_words.add(max(keep_words) + 1)
-    keep_words = list(keep_words)
+            keep_words.append(_token_dict[c])
 
     tokenizer = SimpleTokenizer(token_dict) # 建立分词器
 
@@ -89,23 +76,7 @@ def process_data(neg_file='datasets/neg.xls', pos_file='datasets/pos.xls'):
     with open(os.path.join(model_save_path, 'keep_words.pkl'), "wb") as f:
         pickle.dump(keep_words, f)
 
-    if not os.path.exists('./random_order.json'):
-        random_order = [i for i in range(len(data))]
-        random.shuffle(random_order)
-        json.dump(
-            random_order,
-            open('./random_order.json', 'w'),
-            indent=4
-        )
-    else:
-        random_order = json.load(open('./random_order.json'))
-
-
-    # 按照9:1的比例划分训练集和验证集
-    train_data = [data[j] for i, j in enumerate(random_order) if i % 10 != 0]
-    valid_data = [data[j] for i, j in enumerate(random_order) if i % 10 == 0]
-
-    return train_data, valid_data, tokenizer, keep_words
+    return train_datas, dev_datas, test_datas, tokenizer, keep_words
 
 def seq_padding(X, padding=0):
     L = [len(x) for x in X]
@@ -133,9 +104,10 @@ class data_generator:
             X1, X2, Y = [], [], []
             for i in idxs:
                 d = self.data[i]
-                text = d[0][:maxlen]
-                x1, x2 = self.tokenizer.encode(first=text)
-                y = d[1]
+                text1 = d[0][:maxlen]
+                text2 = d[1][:maxlen]
+                x1, x2 = self.tokenizer.encode(first=text1+text2)
+                y = d[2]
 
                 X1.append(x1)
                 X2.append(x2)
@@ -144,14 +116,10 @@ class data_generator:
                     X1 = seq_padding(X1)
                     X2 = seq_padding(X2)
                     Y = seq_padding(Y)
-                    # print('X1: {}, X2: {}, Y: {}'.format(X1.shape, X2.shape, Y.shape))
-                    # print('X1: {}, X2: {}, Y: {}'.format(X1[0].shape, X2[0].shape, Y[0].shape))
-                    # print('退出')
-                    # exit(0)
                     yield [X1, X2], Y
-                    [X1, X2, Y] = [], [], []
+                    X1, X2, Y = [], [], []
 
-def train(train_data, valid_data, tokenizer, keep_words):
+def make_model(keep_words):
     model = load_pretrained_model(
         config_path,
         checkpoint_path,
@@ -161,7 +129,7 @@ def train(train_data, valid_data, tokenizer, keep_words):
 
     output = Lambda(lambda x: x[:, 0])(model.output)
     output = Dense(1, activation='sigmoid')(output)
-    model = Model(model.input, output)
+    model = Model(inputs=model.input, outputs=output)
 
     model.compile(
         loss='binary_crossentropy',
@@ -170,15 +138,18 @@ def train(train_data, valid_data, tokenizer, keep_words):
         metrics=['accuracy']
     )
     model.summary()
+    return model
 
+def train(train_data, valid_data, tokenizer, keep_words):
 
+    model = make_model(keep_words)
     train_D = data_generator(train_data, tokenizer=tokenizer)
     valid_D = data_generator(valid_data, tokenizer=tokenizer)
 
     early_stopping = EarlyStopping(monitor='val_loss', patience=3)
 
     model_checkpoint = ModelCheckpoint(filepath=os.path.join(model_save_path,
-                                                             'checkpoint-{epoch:02d}-{val_loss:.2f}-{val_acc:.3f}.hdf5'),
+                                                             'similarity-{epoch:02d}-{val_loss:.2f}-{val_acc:.3f}.hdf5'),
                                        save_best_only=True, save_weights_only=False)
 
     tb = TensorBoard(log_dir=log_dir,  # log 目录
@@ -195,42 +166,26 @@ def train(train_data, valid_data, tokenizer, keep_words):
     model.fit_generator(
         train_D.__iter__(),
         steps_per_epoch=len(train_D),
-        epochs=5,
+        epochs=2,
         validation_data=valid_D.__iter__(),
         validation_steps=len(valid_D),
         callbacks=[early_stopping, model_checkpoint, tb]
     )
 
-def predict(text):
+def predict(text1, text2):
     with open(os.path.join(model_save_path, 'tokenizer.pkl'), "rb") as f:
         tokenizer = pickle.load(f)
 
     with open(os.path.join(model_save_path, 'keep_words.pkl'), "rb") as f:
         keep_words = pickle.load(f)
 
-    model = load_pretrained_model(
-        config_path,
-        checkpoint_path,
-        keep_words=keep_words,
-        albert=True
-    )
-
-    output = Lambda(lambda x: x[:, 0])(model.output)
-    output = Dense(1, activation='sigmoid')(output)
-    model = Model(model.input, output)
-
-    model.compile(
-        loss='binary_crossentropy',
-        optimizer=Adam(1e-5),  # 用足够小的学习率
-        # optimizer=PiecewiseLinearLearningRate(Adam(1e-5), {1000: 1e-5, 2000: 6e-5}),
-        metrics=['accuracy']
-    )
-    model.summary()
+    model = make_model(keep_words)
     model.load_weights(os.path.join(model_save_path, 'checkpoint-02-0.15-0.939.hdf5'), by_name=True,
                      skip_mismatch=True, reshape=True)
 
-    text = text[:maxlen]
-    x1, x2 = tokenizer.encode(first=text)
+    text1 = text1[:maxlen]
+    text2 = text2[:maxlen]
+    x1, x2 = tokenizer.encode(first=text1+text2)
 
     X1 = seq_padding([x1])
     X2 = seq_padding([x2])
@@ -239,11 +194,11 @@ def predict(text):
 
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == 'train':
-        train_data, valid_data, tokenizer, keep_words = process_data(neg_file='datasets/neg.xls', pos_file='datasets/pos.xls')
-        train(train_data, valid_data, tokenizer, keep_words)
+        train_data, valid_data, test_data, tokenizer, keep_words = process_data(train_file=TRAIN_DATA_PATH, dev_file=DEV_DATA_PATH, test_file=TEST_DATA_PATH)
+        train(train_data[:2000], valid_data[:50], tokenizer, keep_words)
     else:
-        ret = predict('这件衣服真漂亮')
-        # 0： 负面； 1： 正面
+        ret = predict('这件衣服真漂亮', '这件衣服真好看')
+        # 0： 不相似； 1： 相似
         print(ret)
 
 if __name__ == '__main__':

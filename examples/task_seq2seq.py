@@ -8,7 +8,7 @@ import numpy as np
 from tqdm import tqdm
 import os, json, codecs
 from collections import Counter
-import uniout
+# import uniout
 from bert4keras.bert import load_pretrained_model
 from bert4keras.utils import SimpleTokenizer, load_vocab
 from keras.layers import *
@@ -60,23 +60,33 @@ else:
     )
 
 
-config_path = '/root/kg/bert/chinese_wwm_L-12_H-768_A-12/bert_config.json'
-checkpoint_path = '/root/kg/bert/chinese_wwm_L-12_H-768_A-12/bert_model.ckpt'
-dict_path = '/root/kg/bert/chinese_wwm_L-12_H-768_A-12/vocab.txt'
+albert_model_path = '/home/gswyhq/github_projects/albert_zh/albert_large_zh'
+# albert_model_path = '/notebooks/albert_zh/albert_large_zh'
+# https://storage.googleapis.com/albert_zh/albert_large_zh.zip
+
+config_path = os.path.join(albert_model_path, 'albert_config_large.json')
+checkpoint_path = os.path.join(albert_model_path, 'albert_model.ckpt')
+dict_path = os.path.join(albert_model_path, 'vocab.txt')
+
+# config_path = '/root/kg/bert/chinese_wwm_L-12_H-768_A-12/bert_config.json'
+# checkpoint_path = '/root/kg/bert/chinese_wwm_L-12_H-768_A-12/bert_model.ckpt'
+# dict_path = '/root/kg/bert/chinese_wwm_L-12_H-768_A-12/vocab.txt'
 
 
 _token_dict = load_vocab(dict_path) # 读取词典
-token_dict, keep_words = {}, []
+token_dict, keep_words = {}, set()
 
 for c in ['[PAD]', '[UNK]', '[CLS]', '[SEP]', '[unused1]']:
     token_dict[c] = len(token_dict)
-    keep_words.append(_token_dict[c])
+    keep_words.add(_token_dict[c])
 
 for c in chars:
     if c in _token_dict:
         token_dict[c] = len(token_dict)
-        keep_words.append(_token_dict[c])
+        keep_words.add(_token_dict[c])
 
+keep_words.add(max(keep_words)+1)
+keep_words = list(keep_words)
 
 tokenizer = SimpleTokenizer(token_dict) # 建立分词器
 

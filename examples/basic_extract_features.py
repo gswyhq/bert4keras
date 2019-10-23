@@ -1,14 +1,18 @@
 #! -*- coding: utf-8 -*-
 # 测试代码可用性: 提取特征
 
+import os
 from bert4keras.bert import load_pretrained_model
 from bert4keras.utils import SimpleTokenizer, load_vocab
 import numpy as np
 
+albert_model_path = '/home/gswyhq/github_projects/albert_zh/albert_large_zh'
+# albert_model_path = '/notebooks/albert_zh/albert_large_zh'
+# https://storage.googleapis.com/albert_zh/albert_large_zh.zip
 
-config_path = '../../kg/bert/chinese_L-12_H-768_A-12/bert_config.json'
-checkpoint_path = '../../kg/bert/chinese_L-12_H-768_A-12/bert_model.ckpt'
-dict_path = '../../kg/bert/chinese_L-12_H-768_A-12/vocab.txt'
+config_path = os.path.join(albert_model_path, 'albert_config_large.json')
+checkpoint_path = os.path.join(albert_model_path, 'albert_model.ckpt')
+dict_path = os.path.join(albert_model_path, 'vocab.txt')
 
 token_dict = load_vocab(dict_path) # 读取词典
 tokenizer = SimpleTokenizer(token_dict) # 建立分词器
