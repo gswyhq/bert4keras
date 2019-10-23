@@ -147,6 +147,7 @@ class Data_set:
         with open(data_path, "r") as f:
             text = f.readline()
             while text:
+                text = text.strip()
                 if '/' in text:
                     text = text.strip()
                     data = [[word.rsplit('/', maxsplit=1) for word in text.rsplit('\t', maxsplit=1)[0].split() if
@@ -214,7 +215,7 @@ class Data_set:
         ner_pad = np.expand_dims(ner_pad, 2)
         rel_pad = np.array(relel_sen)
         # shape: (200, 200), (200, 200, 1), (200, 42)
-        print("head1: {}, {}, {}".format(sen_pad[0], ner_pad[0], rel_pad[0]))
+        # print("head1: {}, {}, {}".format(sen_pad[0], ner_pad[0], rel_pad[0]))
         return sen_pad, ner_pad, rel_pad
 
     def data_augmentation(self, word_flag):
@@ -254,6 +255,7 @@ class Data_set:
         batch_ner_tag = []
         batch_rel_tag = []
         class_weight_count = {}
+        # self.id2flag = {v: k for k, v in self.flag2id.items()}
         while True:
             temp_data_file = '{}.temp'.format(data_file)
             command = 'shuf {} -o {}'.format(data_file, temp_data_file)
@@ -261,6 +263,7 @@ class Data_set:
             with open(temp_data_file, "r") as f:
                 text = f.readline()
                 while text:
+                    text = text.strip()
                     if '/' in text:
                         word_flag, rel_tag = [[word.rsplit('/', maxsplit=1) for word in text.rsplit('\t', maxsplit=1)[0].split() if
                               word[1] == '/'], text.rsplit('\t', maxsplit=1)[-1]]
@@ -297,7 +300,7 @@ class Data_set:
                             flag_id = self.flag2id.get(flag, 0)
                             flag_ids.append(flag_id)
                         batch_ner_tag.append(flag_ids)
-                        # print('rel_tag`{}`'.format(rel_tag))
+                        # print('words: {}; flag_ids: {}; rel_tag`{}`'.format(''.join([word for word, flag in word_flag]), [self.id2flag.get(k) for k in flag_ids], rel_tag))
                         batch_rel_tag.append(to_categorical(self.rel2id.get(rel_tag, 0), num_classes=len(self.rel2id)))
                         if len(batch_ner_tag) >= batch_size:
                             batch_sentence = pad_sequences(batch_text, input_length)
@@ -403,7 +406,7 @@ def train(batch_size=32, input_length = 200, epochs=EPOCHS):
                      embeddings_layer_names=None,
                      embeddings_metadata=None)
 
-    hist = model.fit_generator(pre_data.batch_generator(TRAIN_DATA_PATH, batch_size=batch_size, input_length=input_length),
+    hist = model.fit_generator(pre_data.batch_generator(TRAIN_DATA_PATH, batch_size=batch_size, input_length=input_length, data_type='train'),
                                # batch_size=32,
                                epochs=epochs,
                                # verbose=1,
