@@ -39,7 +39,12 @@ from gensim.models import KeyedVectors
 from keras.optimizers import Adam
 
 sys.path.append('.')
-from config import model_save_path, log_dir, TERM_FREQUENCY_FILE, WORD_EMBEDDING_FILE
+from config import albert_model_path, config_path, checkpoint_path, dict_path, model_save_path, log_dir, TERM_FREQUENCY_FILE
+from bert4keras.bert import load_pretrained_model, set_gelu
+from bert4keras.utils import SimpleTokenizer, load_vocab
+
+set_gelu('tanh') # 切换gelu版本
+
 
 # 禁用GPU
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"   # see issue #152
@@ -52,8 +57,8 @@ tf_config.gpu_options.allow_growth = True
 set_session(tf.Session(config=tf_config))
 
 model_save_path = './models_ner_classify'
-TRAIN_DATA_PATH = "./data/ner_rel_train.txt"
-DEV_DATA_PATH = "./data/ner_rel_dev.txt"
+TRAIN_DATA_PATH = "./data/ner_rel_train2.txt"
+DEV_DATA_PATH = "./data/ner_rel_dev2.txt"
 TEST_DATA_PATH = "./data/ner_rel_test.txt"
 
 EPOCHS = 100
@@ -126,9 +131,17 @@ def generator_bio_format(text, entity_dict):
     # print(''.join([word for word, flag in word_flag]), ''.join([flag for word, flag in word_flag]))
     return word_flag
 
+def seq_padding(X, padding=0):
+    L = [len(x) for x in X]
+    ML = max(L)
+    return np.array([
+        np.concatenate([x, [padding] * (ML - len(x))]) if len(x) < ML else x for x in X
+    ])
+
 class Data_set:
     def __init__(self):
-        self.word2id = {}
+        self.keep_words = None
+        self.tokenizer = None
         self.flag2id = {}
         self.rel2id = {}
         self.train_count = 0
@@ -177,20 +190,19 @@ class Data_set:
         with open('./data/dev_data.json', 'r')as f:
             dev_data = json.load(f)
 
-        with open(os.path.join(save_path, 'word2id.pkl'), "rb") as f:
-            word2id = pickle.load(f)
+        with open(os.path.join(save_path, 'tokenizer.pkl'), "rb") as f:
+            tokenizer = pickle.load(f)
         with open(os.path.join(save_path, 'flag2id.pkl'), "rb") as f:
             flag2id = pickle.load(f)
         with open(os.path.join(save_path, 'rel2id.pkl'), "rb") as f:
             rel2id = pickle.load(f)
-        self.word2id, self.flag2id, self.rel2id = word2id, flag2id, rel2id
+        self.tokenizer, self.flag2id, self.rel2id = tokenizer, flag2id, rel2id
 
-        return train_data, dev_data, word2id, flag2id, rel2id
+        return train_data, dev_data, tokenizer, flag2id, rel2id
 
     def save_vocab(self, save_path, process_data):
         flags = set()
         relationships = set()
-        chars = set()
         for old_word_flag, relationship in process_data:
             word_flag = []
             for word, flag in old_word_flag:
@@ -199,37 +211,34 @@ class Data_set:
                 elif flag[0] == 'I':
                     flag = 'I-Shiyi'
                 word_flag.append([word, flag])
-            chars.update(set(word for word, flag in word_flag))
             flags.update(set(flag for word, flag in word_flag))
             relationships.add(relationship)
-        word2id = {char: id_ + 1 for id_, char in enumerate(chars)}
-        word2id["unk"] = 0
+
+        token_dict = load_vocab(dict_path)  # 读取词典
+
+        keep_words = list(set(token_dict.values()))
+
+        tokenizer = SimpleTokenizer(token_dict) # 建立分词器
+
+
         flag2id = {label: id_ + 1 for id_, label in enumerate(sorted(flags, key=lambda x: 0 if x == 'O' else 1))}
         flag2id['unk'] = 0
         rel2id = {rel: _id for _id, rel in enumerate(relationships)}
-        with open(os.path.join(save_path, 'word2id.pkl'), "wb") as f:
-            pickle.dump(word2id, f)
+
+        with open(os.path.join(model_save_path, 'tokenizer.pkl'), "wb") as f:
+            pickle.dump(tokenizer, f)
+
+        with open(os.path.join(model_save_path, 'keep_words.pkl'), "wb") as f:
+            pickle.dump(keep_words, f)
+
         with open(os.path.join(save_path, 'flag2id.pkl'), "wb") as f:
             pickle.dump(flag2id, f)
         with open(os.path.join(save_path, 'rel2id.pkl'), "wb") as f:
             pickle.dump(rel2id, f)
-        self.word2id, self.flag2id, self.rel2id = word2id, flag2id, rel2id
-        return word2id, flag2id, rel2id
 
-    def generate_data(self, process_data, input_length):
-        char_data_sen = [[token[0] for token in i] for i, j in process_data]
-        nerel_sen = [[token[1] for token in i] for i, j in process_data]
-        sen2id = [[self.word2id.get(char, 0) for char in sen] for sen in char_data_sen]
-        relel_sen = [to_categorical(self.rel2id.get(relel, 0), num_classes=len(self.rel2id)) for i, relel in process_data]
-        ner_sen2id = [[self.flag2id.get(ner, 1) for ner in sen] for sen in nerel_sen]
+        self.tokenizer, self.flag2id, self.rel2id = tokenizer, flag2id, rel2id
 
-        sen_pad = pad_sequences(sen2id, input_length)
-        ner_pad = pad_sequences(ner_sen2id, input_length, value=-1)
-        ner_pad = np.expand_dims(ner_pad, 2)
-        rel_pad = np.array(relel_sen)
-        # shape: (200, 200), (200, 200, 1), (200, 42)
-        # print("head1: {}, {}, {}".format(sen_pad[0], ner_pad[0], rel_pad[0]))
-        return sen_pad, ner_pad, rel_pad
+        return tokenizer, keep_words, flag2id, rel2id
 
     def data_augmentation(self, word_flag):
         """
@@ -264,9 +273,9 @@ class Data_set:
         return word_flag
 
     def batch_generator(self, data_file, batch_size=32, input_length=200, data_type=''):
-        batch_text = []
-        batch_ner_tag = []
-        batch_rel_tag = []
+        X1, X2 = [], []
+        Y_NER = []
+        Y_REL = []
         class_weight_count = {}
         # self.id2flag = {v: k for k, v in self.flag2id.items()}
         while True:
@@ -274,37 +283,42 @@ class Data_set:
             command = 'shuf {} -o {}'.format(data_file, temp_data_file)
             os.system(command)
             with open(temp_data_file, "r") as f:
-                text = f.readline()
-                while text:
-                    text = unicodedata.normalize('NFKD', text).strip()
-                    if '/' in text:
-                        word_flag, rel_tag = [[word.rsplit('/', maxsplit=1) for word in text.rsplit('\t', maxsplit=1)[0].split() if
-                              word[1] == '/'], text.rsplit('\t', maxsplit=1)[-1]]
+                line = f.readline()
+                while line:
+                    line = unicodedata.normalize('NFKD', line).strip()
+                    if '/' in line:
+                        word_flag, rel_tag = [[word.rsplit('/', maxsplit=1) for word in line.rsplit('\t', maxsplit=1)[0].split() if
+                              word[1] == '/'], line.rsplit('\t', maxsplit=1)[-1]]
 
                         # 80%概率忽略掉30个字符以上的，80%概率忽略掉没有实体词的语料
                         if (random.random() > 0.2 and len(word_flag) > 30) or (random.random() > 0.2 and all(flag == 'O' for word, flag in word_flag[:20])):
-                            text = f.readline()
+                            line = f.readline()
                             continue
 
                         if data_type == 'train' and random.random() > 0.2 and input_length - len(word_flag) > 20 and \
                                 any(word for word, flag in word_flag if flag == 'O'):
                             word_flag = self.data_augmentation(word_flag)
 
-                        word_flag = word_flag[:input_length]
+                        # word_flag = word_flag[:input_length]
 
                         # 有些类别的数据太多(最多类别记录有： 2476218， 最小类别记录仅454)，当数据量太多(超过最小标签类别数的100倍)是就按一定概率进行忽略；
                         class_weight_count.setdefault(rel_tag, 0)
                         if random.random() < 0.8 and (class_weight_count.get(rel_tag, 0) + 1) / (min(class_weight_count.values())+1) > 10:
-                            text = f.readline()
+                            line = f.readline()
                             continue
                         else:
                             class_weight_count[rel_tag] += 1
 
                         # print('word_flag={}'.format(word_flag))
+                        # batch_text.append([self.word2id.get(word, 0)  for word, flag in word_flag])
+                        text = ''.join([word for word, flag in word_flag])
+                        text = text[:input_length]
+                        x1, x2 = self.tokenizer.encode(first=text)
+                        X1.append(x1)
+                        X2.append(x2)
 
-                        batch_text.append([self.word2id.get(word, 0)  for word, flag in word_flag])
                         flag_ids = []
-                        for word, flag in word_flag:
+                        for word, flag in word_flag[:input_length]:
                             # 命名实体不准确，将所有的实体类型都统一为shiyi
                             if flag[0] == 'B':
                                 flag = 'B-Shiyi'
@@ -312,24 +326,35 @@ class Data_set:
                                 flag = 'I-Shiyi'
                             flag_id = self.flag2id.get(flag, 1)
                             flag_ids.append(flag_id)
-                        batch_ner_tag.append(flag_ids)
+                        Y_NER.append([self.flag2id.get('O')] + flag_ids + [self.flag2id.get('O')])
                         # print('words: {}; flag_ids: {}; rel_tag`{}`'.format(''.join([word for word, flag in word_flag]), [self.id2flag.get(k) for k in flag_ids], rel_tag))
-                        batch_rel_tag.append(to_categorical(self.rel2id.get(rel_tag, 0), num_classes=len(self.rel2id)))
-                        if len(batch_ner_tag) >= batch_size:
-                            batch_sentence = pad_sequences(batch_text, input_length)
-                            ner_pad = pad_sequences(batch_ner_tag, input_length, value=0)
-                            # print('ner_pad', ner_pad[0])
-                            batch_flag_tags = np.expand_dims(ner_pad, 2)
-                            # print('batch_flag_tags', batch_flag_tags[0])
-                            batch_rel_tags = np.array(batch_rel_tag)
-                            # print('shape: {}'.format(batch_rel_tags[0].shape))
-                            yield ({'input': batch_sentence}, {'ner_out': batch_flag_tags, 'rel_out': batch_rel_tags})
-                            batch_text = []
-                            batch_ner_tag = []
-                            batch_rel_tag = []
-                    text = f.readline()
-                if batch_ner_tag:
-                    yield ({'input': batch_sentence}, {'ner_out': batch_flag_tags, 'rel_out': batch_rel_tags})
+                        Y_REL.append(to_categorical(self.rel2id.get(rel_tag, 0), num_classes=len(self.rel2id)))
+                        if len(X1) >= batch_size:
+                            Y_NER = seq_padding(Y_NER)
+                            # print('x.shape: {}, y.shape: {}'.format(X1[0].shape, Y[0].shape))
+                            Y_NER = np.expand_dims(Y_NER, 2)
+                            X1 = seq_padding(X1)
+                            X2 = seq_padding(X2)
+                            Y_REL = seq_padding(Y_REL)
+
+                            # yield ({'input': [X1, X2]}, {'ner_out': Y_NER, 'rel_out': Y_REL})
+                            yield ({'Input-Token': X1, 'Input-Segment': X2}, {'ner_out': Y_NER, 'rel_out': Y_REL})
+                            X1, X2 = [], []
+                            Y_NER = []
+                            Y_REL = []
+                    line = f.readline()
+                if X1:
+                    Y_NER = seq_padding(Y_NER)
+                    # print('x.shape: {}, y.shape: {}'.format(X1[0].shape, Y[0].shape))
+                    Y_NER = np.expand_dims(Y_NER, 2)
+                    X1 = seq_padding(X1)
+                    X2 = seq_padding(X2)
+                    Y_REL = seq_padding(Y_REL)
+
+                    yield ({'Input-Token': X1, 'Input-Segment': X2}, {'ner_out': Y_NER, 'rel_out': Y_REL})
+                    X1, X2 = [], []
+                    Y_NER = []
+                    Y_REL = []
 
             os.system('rm {}'.format(temp_data_file))
 
@@ -387,39 +412,30 @@ def load_word_embedding_weights(word_embedding_file):
     word_embedding_weights = np.array([wv_from_text.get_vector(word) for word in words], dtype='float32', copy=False)
     return word_embedding_weights
 
-def build_model(input_length, input_dim, ner_units=None, rel_units=None, output_dim=200, word_embedding_weights=None, train_word_embeddings=False):
+def build_model(keep_words, ner_units=None, rel_units=None):
     # construct model
-    input = Input((input_length,), dtype='int32', name='input')
 
-    if word_embedding_weights is None:
-        x = Embedding(output_dim=output_dim, input_dim=input_dim, input_length=input_length, mask_zero=True)(input)
-    else:
-        x = Embedding(input_dim=word_embedding_weights.shape[0],
-                               output_dim=word_embedding_weights.shape[1],
-                               weights=[word_embedding_weights],
-                               trainable=train_word_embeddings,
-                               mask_zero=True,
-                               name='WordEmbedding')(input)
-        # mask_zero：布尔值，确定是否将输入中的‘0’看作是应该被忽略的‘填充’（padding）值，该参数在使用递归层处理变长输入时有用。
-        # 设置为True的话，模型中后续的层必须都支持masking，否则会抛出异常。如果该值为True，则下标0在字典中不可用，input_dim应设置为|words| + 1。
-    # x = BatchNormalization()(x)
-    lstm_out = Bidirectional(LSTM(100, return_sequences=True))(x)
+    model = load_pretrained_model(
+        config_path,
+        checkpoint_path,
+        keep_words=keep_words,
+        albert=True
+    )
 
-    # bilstm_drop = Dropout(0.1)(lstm_out)
-    # dense = TimeDistributed(Dense(word_embedding_weights.shape[1]))(bilstm_drop)
+    output = Lambda(lambda x: x[:, 0])(model.output)
 
-    dense = Dense(200, activation='relu')(lstm_out)
+    # dense = Dense(200, activation='relu')(output)
     # dense = BatchNormalization()(dense)
-    ner_out = CRF(ner_units, sparse_target=True, name='ner_out')(dense)
+    ner_out = CRF(ner_units, sparse_target=True, name='ner_out')(model.output)
     # dense = Lambda(lambda x: x, output_shape=lambda s: s)(dense)
     # attention_out = Attention(200, name='attention_1')(dense)
-    lambda_out = Lambda(lambda x: x[:, 0])(dense)
+    # lambda_out = Lambda(lambda x: x[:, 0])(dense)
     # lambda_out = BatchNormalization()(lambda_out)
-    rel_out = Dense(rel_units, activation='softmax', name='rel_out')(lambda_out)
+    rel_out = Dense(rel_units, activation='softmax', name='rel_out')(output)
 
-    model = Model(inputs=[input], outputs=[ner_out, rel_out])
+    model = Model(model.input, outputs=[ner_out, rel_out])
     # model.compile(optimizer='rmsprop', loss='binary_crossentropy', loss_weights=[1., 0.2])
-    model.compile(optimizer=Adam(lr=1e-4),
+    model.compile(optimizer=Adam(lr=1e-5),
                   loss={'ner_out': crf_loss, 'rel_out': 'categorical_crossentropy'},
                   metrics = {'ner_out': crf_accuracy, 'rel_out': 'accuracy'},
                   loss_weights={'ner_out': 0.5, 'rel_out': 0.5}
@@ -427,41 +443,27 @@ def build_model(input_length, input_dim, ner_units=None, rel_units=None, output_
     model.summary()
 
     # 保存模型图
-    plot_model(model, 'ner_classify.png')
+    plot_model(model, 'ner_classify_albert_tiny.png')
 
     return model
 
 def train(batch_size=32, input_length = 200, epochs=EPOCHS):
     pre_data = Data_set()
-    wv_from_text = KeyedVectors.load_word2vec_format(WORD_EMBEDDING_FILE, binary=False)
-    word2id, flag2id, rel2id = pre_data.save_vocab(model_save_path,
+    tokenizer, keep_words, flag2id, rel2id = pre_data.save_vocab(model_save_path,
                                                    itertools.chain(pre_data.generator_load_data(TRAIN_DATA_PATH, data_type='train'),
                                                                    pre_data.generator_load_data(DEV_DATA_PATH, data_type='dev')))
 
-    embedding_size = wv_from_text.vectors.shape[-1]
-    word_embedding_weights = np.zeros((len(word2id), embedding_size))
-    for word, i in word2id.items():
-        if word in wv_from_text.index2word:
-            word_embedding_weights[i] = wv_from_text.get_vector(word)
-
-    # 无效词嵌入向量
-    # word_embedding_weights[-1] = np.random.uniform(-1, 1, embedding_size)
-
-    # word_embedding_weights = np.array([wv_from_text.get_vector(word) if word in wv_from_text.index2word else get_not_present_word_vectors(low=0, high=1, size=wv_from_text.vectors.shape[-1]) for word, _ in sorted(word2id.items(), key=lambda x:x[1])], dtype='float32', copy=False)
-    del wv_from_text
-
     print("训练集数据量：{}，验证集数据量：{}".format(pre_data.train_count, pre_data.dev_count))
-    print('单词数： {}， 实体类别数：{}， 关系数：{}'.format(len(word2id), len(flag2id), len(rel2id)))
+    print('实体类别数：{}， 关系数：{}'.format(len(flag2id), len(rel2id)))
     # print('字向量维度：{}'.format(word_embedding_weights.shape))
     # steps_per_epoch = math.ceil(pre_data.train_count / batch_size)
     # validation_steps = math.ceil(pre_data.dev_count / batch_size)
 
-    model = build_model(input_length, input_dim=len(word2id), ner_units=len(flag2id), rel_units=len(rel2id), output_dim=200, word_embedding_weights=word_embedding_weights, train_word_embeddings=True)
-
+    model = build_model(keep_words, ner_units=len(flag2id), rel_units=len(rel2id))
     early_stopping = EarlyStopping(monitor='val_loss', patience=3)
 
     model_checkpoint = ModelCheckpoint(filepath=os.path.join(model_save_path,
-                                                             'ner-classify-{epoch:02d}-{ner_out_crf_accuracy:.4f}-{rel_out_acc:.4f}.hdf5'),
+                                                             'ner-classify-albert-tiny-{epoch:02d}-{ner_out_crf_accuracy:.4f}-{rel_out_acc:.4f}.hdf5'),
                                        save_best_only=True, save_weights_only=False)
 
     tb = TensorBoard(log_dir=log_dir,  # log 目录
@@ -497,20 +499,24 @@ def incremental_train(batch_size=16, input_length = 200, filepath='classify-02-0
     """
     print('开始增量训练...')
     pre_data = Data_set()
-    with open(os.path.join(model_save_path, 'word2id.pkl'), "rb") as f:
-        word2id = pickle.load(f)
+    with open(os.path.join(model_save_path, 'keep_words.pkl'), "rb") as f:
+        keep_words = pickle.load(f)
+    with open(os.path.join(model_save_path, 'tokenizer.pkl'), "rb") as f:
+        tokenizer = pickle.load(f)
+
     with open(os.path.join(model_save_path, 'flag2id.pkl'), "rb") as f:
         flag2id = pickle.load(f)
     with open(os.path.join(model_save_path, 'rel2id.pkl'), "rb") as f:
         rel2id = pickle.load(f)
-    print('单词数： {}， 实体类别数：{}， 关系数：{}'.format(len(word2id), len(flag2id), len(rel2id)))
+    print('单词数： {}， 实体类别数：{}， 关系数：{}'.format(len(keep_words), len(flag2id), len(rel2id)))
     # print('rel2id={}'.format(rel2id))
 
-    pre_data.word2id = word2id
+    pre_data.keep_words = keep_words
+    pre_data.tokenizer = tokenizer
     pre_data.flag2id = flag2id
     pre_data.rel2id = rel2id
 
-    model = build_model(input_length, input_dim=len(word2id), ner_units=len(flag2id), rel_units=len(rel2id), output_dim=200)
+    model = build_model(keep_words, ner_units=len(flag2id), rel_units=len(rel2id))
     model.load_weights(os.path.join(model_save_path, filepath))
 
     early_stopping = EarlyStopping(monitor='val_loss', patience=3)
@@ -578,28 +584,38 @@ def result_to_json(string, tags):
     return datas
 
 def predict(data, input_length=200):
-    with open(os.path.join(model_save_path, 'word2id.pkl'), "rb") as f:
-        word2id = pickle.load(f)
+    with open(os.path.join(model_save_path, 'keep_words.pkl'), "rb") as f:
+        keep_words = pickle.load(f)
+    with open(os.path.join(model_save_path, 'tokenizer.pkl'), "rb") as f:
+        tokenizer = pickle.load(f)
+
     with open(os.path.join(model_save_path, 'flag2id.pkl'), "rb") as f:
         flag2id = pickle.load(f)
     with open(os.path.join(model_save_path, 'rel2id.pkl'), "rb") as f:
         rel2id = pickle.load(f)
-
+    id2rel = {v: k for k, v in rel2id.items()}
     id2flag = {v: k for k, v in flag2id.items()}
-    id2rel = {v: k.strip() for k, v in rel2id.items()}
-    sen2id = [[word2id.get(char, 0) for char in unicodedata.normalize('NFKD', sen)] for sen in data]
+    print('单词数： {}， 实体类别数：{}， 关系数：{}'.format(len(keep_words), len(flag2id), len(rel2id)))
+    # print('rel2id={}'.format(rel2id))
 
-    sen_pad = pad_sequences(sen2id, input_length)
+    model = build_model(keep_words, ner_units=len(flag2id), rel_units=len(rel2id))
 
-    model = build_model(input_length, input_dim=len(word2id), ner_units=len(flag2id), rel_units=len(rel2id), output_dim=200)
-
-    model.load_weights(os.path.join(model_save_path, 'ner-classify-06-0.9426-0.9132.hdf5'), by_name=True,
+    model.load_weights(os.path.join(model_save_path, 'ner-classify-albert-tiny-04-0.9335-0.9514.hdf5'), by_name=True,
                      skip_mismatch=True, reshape=True)
 
-    ner_labels, rel_labels = model.predict(sen_pad, input_length)
-
-    # print(ner_labels, rel_labels)
-    # ner_label = ner_label[-input_length]
+    X1 = []
+    X2 = []
+    for text in data:
+        text = text[:input_length]
+        x1, x2 = tokenizer.encode(first=text)
+        X1.append(x1)
+        X2.append(x2)
+    X1 = seq_padding(X1)
+    X2 = seq_padding(X2)
+    rets = model.predict([X1, X2])
+    ner_labels, rel_labels = rets
+    print(rets)
+    print([ret.shape for ret in rets])
     results = []
     for ner_label, rel_label, text in zip(ner_labels, rel_labels, data):
         # print(ner_label.shape)
