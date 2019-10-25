@@ -4,16 +4,16 @@
 import os
 
 # albert_config_large.json  albert_model.ckpt.data-00000-of-00001  albert_model.ckpt.index  albert_model.ckpt.meta  checkpoint  vocab.txt
-albert_model_path = './albert_large_zh'
+# albert_model_path = './albert_large_zh'
+albert_model_path = './albert_tiny'
 # albert_model_path = '/notebooks/albert_zh/albert_large_zh'
 # https://storage.googleapis.com/albert_zh/albert_large_zh.zip
 
-config_path = os.path.join(albert_model_path, 'albert_config_large.json')
+# config_path = os.path.join(albert_model_path, 'albert_config_large.json')
+config_path = os.path.join(albert_model_path, 'albert_config_tiny.json')
 checkpoint_path = os.path.join(albert_model_path, 'albert_model.ckpt')
 dict_path = os.path.join(albert_model_path, 'vocab.txt')
 
-# albert_model_path = './albert_tiny'
-# config_path = os.path.join(albert_model_path, 'albert_config_tiny.json')
 WORD_EMBEDDING_FILE = './data/Tencent_char_Embedding.txt'
 
 model_save_path = './models'

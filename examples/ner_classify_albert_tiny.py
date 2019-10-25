@@ -56,9 +56,9 @@ tf_config.gpu_options.per_process_gpu_memory_fraction = 0.8
 tf_config.gpu_options.allow_growth = True
 set_session(tf.Session(config=tf_config))
 
-model_save_path = './models_ner_classify'
-TRAIN_DATA_PATH = "./data/ner_rel_train2.txt"
-DEV_DATA_PATH = "./data/ner_rel_dev2.txt"
+model_save_path = './models_ner_classify_albert_tiny'
+TRAIN_DATA_PATH = "./data/ner_rel_train.txt"
+DEV_DATA_PATH = "./data/ner_rel_dev.txt"
 TEST_DATA_PATH = "./data/ner_rel_test.txt"
 
 EPOCHS = 100
@@ -206,10 +206,10 @@ class Data_set:
         for old_word_flag, relationship in process_data:
             word_flag = []
             for word, flag in old_word_flag:
-                if flag[0] == 'B':
-                    flag = 'B-Shiyi'
-                elif flag[0] == 'I':
-                    flag = 'I-Shiyi'
+                # if flag[0] == 'B':
+                #     flag = 'B-Shiyi'
+                # elif flag[0] == 'I':
+                #     flag = 'I-Shiyi'
                 word_flag.append([word, flag])
             flags.update(set(flag for word, flag in word_flag))
             relationships.add(relationship)
@@ -320,10 +320,10 @@ class Data_set:
                         flag_ids = []
                         for word, flag in word_flag[:input_length]:
                             # 命名实体不准确，将所有的实体类型都统一为shiyi
-                            if flag[0] == 'B':
-                                flag = 'B-Shiyi'
-                            elif flag[0] == 'I':
-                                flag = 'I-Shiyi'
+                            # if flag[0] == 'B':
+                            #     flag = 'B-Shiyi'
+                            # elif flag[0] == 'I':
+                            #     flag = 'I-Shiyi'
                             flag_id = self.flag2id.get(flag, 1)
                             flag_ids.append(flag_id)
                         Y_NER.append([self.flag2id.get('O')] + flag_ids + [self.flag2id.get('O')])
@@ -600,7 +600,7 @@ def predict(data, input_length=200):
 
     model = build_model(keep_words, ner_units=len(flag2id), rel_units=len(rel2id))
 
-    model.load_weights(os.path.join(model_save_path, 'ner-classify-albert-tiny-04-0.9335-0.9514.hdf5'), by_name=True,
+    model.load_weights(os.path.join(model_save_path, 'ner-classify-albert-tiny-11-0.9683-0.9766.hdf5'), by_name=True,
                      skip_mismatch=True, reshape=True)
 
     X1 = []
@@ -614,8 +614,8 @@ def predict(data, input_length=200):
     X2 = seq_padding(X2)
     rets = model.predict([X1, X2])
     ner_labels, rel_labels = rets
-    print(rets)
-    print([ret.shape for ret in rets])
+    # print(rets)
+    # print([ret.shape for ret in rets])
     results = []
     for ner_label, rel_label, text in zip(ner_labels, rel_labels, data):
         # print(ner_label.shape)
