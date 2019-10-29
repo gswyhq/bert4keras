@@ -56,10 +56,21 @@ tf_config.gpu_options.per_process_gpu_memory_fraction = 0.8
 tf_config.gpu_options.allow_growth = True
 set_session(tf.Session(config=tf_config))
 
+# TAG_SCHEME = 'BIO'
+TAG_SCHEME = 'BIOES'
+
 model_save_path = './models_ner_classify_albert_tiny'
-TRAIN_DATA_PATH = "./data/ner_rel_train.txt"
-DEV_DATA_PATH = "./data/ner_rel_dev.txt"
-TEST_DATA_PATH = "./data/ner_rel_test.txt"
+if TAG_SCHEME == 'BIO':
+    TRAIN_DATA_PATH = "./data/ner_rel_train.txt"
+    DEV_DATA_PATH = "./data/ner_rel_dev.txt"
+    TEST_DATA_PATH = "./data/ner_rel_test.txt"
+elif TAG_SCHEME == 'BIOES':
+    TRAIN_DATA_PATH = "./data/ner_rel_train_BIOES.txt"
+    DEV_DATA_PATH = "./data/ner_rel_dev_BIOES.txt"
+    TEST_DATA_PATH = "./data/ner_rel_test_BIOES.txt"
+else:
+    raise ValueError('标记方案仅支持：BIO、BIOES')
+
 
 EPOCHS = 100
 
@@ -88,12 +99,12 @@ def random_weight(weight_data, key_list=None, total=None):
             break
     return ret
 
-def generator_bio_format(text, entity_dict):
+def generator_bio_format(text, entity_dict, tag_scheme=TAG_SCHEME):
     """
     根据输入的文本及实体词典，生成对应的bio格式数据
-    :param text:
-    :param entity_dict:
-    :return:
+    :param text: 请问珠穆朗玛峰有多高
+    :param entity_dict: {"珠穆朗玛峰": "山峰"}
+    :return: [['请', 'O'], ['问', 'O'], ['珠', 'B-山峰'], ['穆', 'I-山峰'], ['朗', 'I-山峰'], ['玛', 'I-山峰'], ['峰', 'I-山峰'], ['有', 'O'], ['多', 'O'], ['高', 'O']]
     """
     word_flag = []
     if entity_dict and any(key in text for key in entity_dict.keys()):
@@ -116,14 +127,27 @@ def generator_bio_format(text, entity_dict):
                 word = word.upper()
                 word_len = len(word)
                 word_pinyin = entity_dict.get(word, 'Shiyi').capitalize()
-                if word_len == 1:
-                    word_flag.append([word, 'B-{}'.format(word_pinyin)])
-                elif word_len >= 2:
-                    word_flag.append([word[0], 'B-{}'.format(word_pinyin)])
-                    for w in word[1:]:
-                        word_flag.append([w, 'I-{}'.format(word_pinyin)])
+                if tag_scheme == 'BIO':
+                    if word_len == 1:
+                        word_flag.append([word, 'B-{}'.format(word_pinyin)])
+                    elif word_len >= 2:
+                        word_flag.append([word[0], 'B-{}'.format(word_pinyin)])
+                        for w in word[1:]:
+                            word_flag.append([w, 'I-{}'.format(word_pinyin)])
+                    else:
+                        continue
+                elif tag_scheme == 'BIOES':
+                    if word_len == 1:
+                        word_flag.append([word, 'S-{}'.format(word_pinyin)])
+                    elif word_len >= 2:
+                        word_flag.append([word[0], 'B-{}'.format(word_pinyin)])
+                        for w in word[1:-1]:
+                            word_flag.append([w, 'I-{}'.format(word_pinyin)])
+                        word_flag.append([word[-1], 'E-{}'.format(word_pinyin)])
+                    else:
+                        continue
                 else:
-                    continue
+                    raise ValueError('不支持的标注格式')
             else:
                 word_flag.append([char, 'O'])
     else:
