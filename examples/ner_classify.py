@@ -194,10 +194,10 @@ class Data_set:
         for old_word_flag, relationship in process_data:
             word_flag = []
             for word, flag in old_word_flag:
-                if flag[0] == 'B':
-                    flag = 'B-Shiyi'
-                elif flag[0] == 'I':
-                    flag = 'I-Shiyi'
+                # if flag[0] == 'B':
+                #     flag = 'B-Shiyi'
+                # elif flag[0] == 'I':
+                #     flag = 'I-Shiyi'
                 word_flag.append([word, flag])
             chars.update(set(word for word, flag in word_flag))
             flags.update(set(flag for word, flag in word_flag))
@@ -286,9 +286,9 @@ class Data_set:
                             text = f.readline()
                             continue
 
-                        if data_type == 'train' and random.random() > 0.2 and input_length - len(word_flag) > 20 and \
-                                any(word for word, flag in word_flag if flag == 'O'):
-                            word_flag = self.data_augmentation(word_flag)
+                        # if data_type == 'train' and random.random() > 0.2 and input_length - len(word_flag) > 20 and \
+                        #         any(word for word, flag in word_flag if flag == 'O'):
+                        #     word_flag = self.data_augmentation(word_flag)
 
                         word_flag = word_flag[:input_length]
 
@@ -306,10 +306,10 @@ class Data_set:
                         flag_ids = []
                         for word, flag in word_flag:
                             # 命名实体不准确，将所有的实体类型都统一为shiyi
-                            if flag[0] == 'B':
-                                flag = 'B-Shiyi'
-                            elif flag[0] == 'I':
-                                flag = 'I-Shiyi'
+                            # if flag[0] == 'B':
+                            #     flag = 'B-Shiyi'
+                            # elif flag[0] == 'I':
+                            #     flag = 'I-Shiyi'
                             flag_id = self.flag2id.get(flag, 1)
                             flag_ids.append(flag_id)
                         batch_ner_tag.append(flag_ids)
@@ -593,7 +593,7 @@ def predict(data, input_length=200):
 
     model = build_model(input_length, input_dim=len(word2id), ner_units=len(flag2id), rel_units=len(rel2id), output_dim=200)
 
-    model.load_weights(os.path.join(model_save_path, 'ner-classify-06-0.9426-0.9132.hdf5'), by_name=True,
+    model.load_weights(os.path.join(model_save_path, 'ner-classify-03-0.9170-0.8914.hdf5'), by_name=True,
                      skip_mismatch=True, reshape=True)
 
     ner_labels, rel_labels = model.predict(sen_pad, input_length)

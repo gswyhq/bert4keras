@@ -295,10 +295,6 @@ class Data_set:
                             line = f.readline()
                             continue
 
-                        if data_type == 'train' and random.random() > 0.2 and input_length - len(word_flag) > 20 and \
-                                any(word for word, flag in word_flag if flag == 'O'):
-                            word_flag = self.data_augmentation(word_flag)
-
                         # word_flag = word_flag[:input_length]
 
                         # 有些类别的数据太多(最多类别记录有： 2476218， 最小类别记录仅454)，当数据量太多(超过最小标签类别数的100倍)是就按一定概率进行忽略；
@@ -308,6 +304,11 @@ class Data_set:
                             continue
                         else:
                             class_weight_count[rel_tag] += 1
+
+                        if data_type == 'train' and random.random() > 0.2 and input_length - len(word_flag) > 20 and \
+                                any(word for word, flag in word_flag if flag == 'O'):
+                            word_flag = self.data_augmentation(word_flag)
+                            # print('数据增强的结果：{}'.format([[word for word, flag in word_flag], [flag for word, flag in word_flag]]))
 
                         # print('word_flag={}'.format(word_flag))
                         # batch_text.append([self.word2id.get(word, 0)  for word, flag in word_flag])
@@ -600,7 +601,7 @@ def predict(data, input_length=200):
 
     model = build_model(keep_words, ner_units=len(flag2id), rel_units=len(rel2id))
 
-    model.load_weights(os.path.join(model_save_path, 'ner-classify-albert-tiny-11-0.9683-0.9766.hdf5'), by_name=True,
+    model.load_weights(os.path.join(model_save_path, 'ner-classify-albert-tiny-13-0.9553-0.9779.hdf5'), by_name=True,
                      skip_mismatch=True, reshape=True)
 
     X1 = []
