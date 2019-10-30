@@ -1,0 +1,8 @@
+# pipreqs /home/gswyhq/ner
+# sudo pip3 install -r requirements.txt -i http://pypi.douban.com/simple --trusted-host=pypi.douban.com
+tornado==6.0.1
+jieba==0.39
+tensorflow==1.13.1
+pydot==1.4.1
+Keras==2.3.1
+git+https://www.github.com/keras-team/keras-contrib.git

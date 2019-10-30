@@ -149,7 +149,7 @@ def train(train_data, valid_data, tokenizer, keep_words):
     early_stopping = EarlyStopping(monitor='val_loss', patience=3)
 
     model_checkpoint = ModelCheckpoint(filepath=os.path.join(model_save_path,
-                                                             'similarity-{epoch:02d}-{val_loss:.2f}-{val_acc:.3f}.hdf5'),
+                                                             'similarity-{epoch:02d}-{val_loss:.2f}-{val_accuracy:.3f}.hdf5'),
                                        save_best_only=True, save_weights_only=False)
 
     tb = TensorBoard(log_dir=log_dir,  # log 目录

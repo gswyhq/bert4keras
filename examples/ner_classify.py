@@ -461,7 +461,7 @@ def train(batch_size=32, input_length = 200, epochs=EPOCHS):
     early_stopping = EarlyStopping(monitor='val_loss', patience=3)
 
     model_checkpoint = ModelCheckpoint(filepath=os.path.join(model_save_path,
-                                                             'ner-classify-{epoch:02d}-{ner_out_crf_accuracy:.4f}-{rel_out_acc:.4f}.hdf5'),
+                                                             'ner-classify-{epoch:02d}-{ner_out_crf_accuracy:.4f}-{val_rel_out_accuracy:.4f}.hdf5'),
                                        save_best_only=True, save_weights_only=False)
 
     tb = TensorBoard(log_dir=log_dir,  # log 目录
@@ -516,7 +516,7 @@ def incremental_train(batch_size=16, input_length = 200, filepath='classify-02-0
     early_stopping = EarlyStopping(monitor='val_loss', patience=3)
 
     model_checkpoint = ModelCheckpoint(filepath=os.path.join(model_save_path,
-                                                             'ner-classify-{epoch:02d}-{ner_out_crf_accuracy:.4f}-{rel_out_acc:.4f}.hdf5'),
+                                                             'ner-classify-{epoch:02d}-{ner_out_crf_accuracy:.4f}-{val_rel_out_accuracy:.4f}.hdf5'),
                                        save_best_only=True, save_weights_only=False)
 
     tb = TensorBoard(log_dir=log_dir,  # log 目录

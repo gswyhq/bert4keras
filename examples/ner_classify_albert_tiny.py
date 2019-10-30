@@ -65,6 +65,9 @@ if TAG_SCHEME == 'BIO':
     TRAIN_DATA_PATH = "./data/ner_rel_train.txt"
     DEV_DATA_PATH = "./data/ner_rel_dev.txt"
     TEST_DATA_PATH = "./data/ner_rel_test.txt"
+    # TRAIN_DATA_PATH = './data/ner_rel0_train_data.txt'
+    # DEV_DATA_PATH = './data/ner_rel0_dev_data.txt'
+
 elif TAG_SCHEME == 'BIOES':
     TRAIN_DATA_PATH = "./data/ner_rel_train_BIOES.txt"
     DEV_DATA_PATH = "./data/ner_rel_dev_BIOES.txt"
@@ -245,9 +248,11 @@ class Data_set:
 
         tokenizer = SimpleTokenizer(token_dict) # 建立分词器
 
+        keep_flags = ['[PAD]', '[UNK]', '[CLS]', '[SEP]', '[unused1]']
+        flag2id = {label: id_ + len(keep_flags) for id_, label in enumerate(sorted(flags, key=lambda x: 0 if x == 'O' else 1))}
+        for flag_id, flag in enumerate(keep_flags):
+            flag2id[flag] = flag_id
 
-        flag2id = {label: id_ + 1 for id_, label in enumerate(sorted(flags, key=lambda x: 0 if x == 'O' else 1))}
-        flag2id['unk'] = 0
         rel2id = {rel: _id for _id, rel in enumerate(relationships)}
 
         with open(os.path.join(model_save_path, 'tokenizer.pkl'), "wb") as f:
@@ -327,7 +332,7 @@ class Data_set:
                             line = f.readline()
                             continue
 
-                        # word_flag = word_flag[:input_length]
+                        word_flag = word_flag[:input_length]
 
                         # 有些类别的数据太多(最多类别记录有： 2476218， 最小类别记录仅454)，当数据量太多(超过最小标签类别数的100倍)是就按一定概率进行忽略；
                         class_weight_count.setdefault(rel_tag, 0)
@@ -346,7 +351,7 @@ class Data_set:
                         # batch_text.append([self.word2id.get(word, 0)  for word, flag in word_flag])
                         text = ''.join([word for word, flag in word_flag])
                         text = text[:input_length]
-                        x1, x2 = self.tokenizer.encode(first=text)
+                        x1, x2 = self.tokenizer.encode(text)
                         X1.append(x1)
                         X2.append(x2)
 
@@ -357,9 +362,11 @@ class Data_set:
                             #     flag = 'B-Shiyi'
                             # elif flag[0] == 'I':
                             #     flag = 'I-Shiyi'
-                            flag_id = self.flag2id.get(flag, 1)
+                            # print('self.flag2id: {}'.format(self.flag2id))
+                            flag_id = self.flag2id.get(flag, self.flag2id['[UNK]'])
                             flag_ids.append(flag_id)
-                        Y_NER.append([self.flag2id.get('O')] + flag_ids + [self.flag2id.get('O')])
+
+                        Y_NER.append([self.flag2id['[CLS]']] + flag_ids + [self.flag2id['[SEP]']])
                         # print('words: {}; flag_ids: {}; rel_tag`{}`'.format(''.join([word for word, flag in word_flag]), [self.id2flag.get(k) for k in flag_ids], rel_tag))
                         Y_REL.append(to_categorical(self.rel2id.get(rel_tag, 0), num_classes=len(self.rel2id)))
                         if len(X1) >= batch_size:
@@ -369,7 +376,8 @@ class Data_set:
                             X1 = seq_padding(X1)
                             X2 = seq_padding(X2)
                             Y_REL = seq_padding(Y_REL)
-
+                            # print('x[0]= {}, ner[0]= {}'.format(list(X1[0]), [list(t) for t in Y_NER[0]]))
+                            # print('x.shpe: {}, ner.shape: {}, rel.shape: {}'.format(X1[0].shape, Y_NER[0].shape, Y_REL[0].shape))
                             # yield ({'input': [X1, X2]}, {'ner_out': Y_NER, 'rel_out': Y_REL})
                             yield ({'Input-Token': X1, 'Input-Segment': X2}, {'ner_out': Y_NER, 'rel_out': Y_REL})
                             X1, X2 = [], []
@@ -468,7 +476,7 @@ def build_model(keep_words, ner_units=None, rel_units=None):
 
     model = Model(model.input, outputs=[ner_out, rel_out])
     # model.compile(optimizer='rmsprop', loss='binary_crossentropy', loss_weights=[1., 0.2])
-    model.compile(optimizer=Adam(lr=1e-5),
+    model.compile(optimizer=Adam(lr=5e-6),
                   loss={'ner_out': crf_loss, 'rel_out': 'categorical_crossentropy'},
                   metrics = {'ner_out': crf_accuracy, 'rel_out': 'accuracy'},
                   loss_weights={'ner_out': 0.5, 'rel_out': 0.5}
@@ -496,7 +504,7 @@ def train(batch_size=32, input_length = 200, epochs=EPOCHS):
     early_stopping = EarlyStopping(monitor='val_loss', patience=3)
 
     model_checkpoint = ModelCheckpoint(filepath=os.path.join(model_save_path,
-                                                             'ner-classify-albert-tiny-{epoch:02d}-{ner_out_crf_accuracy:.4f}-{rel_out_acc:.4f}.hdf5'),
+                                                             'ner-classify-albert-tiny-{epoch:02d}-{ner_out_crf_accuracy:.4f}-{val_rel_out_accuracy:.4f}.hdf5'),
                                        save_best_only=True, save_weights_only=False)
 
     tb = TensorBoard(log_dir=log_dir,  # log 目录
@@ -523,6 +531,80 @@ def train(batch_size=32, input_length = 200, epochs=EPOCHS):
                      )
 
     print(hist.history.items())
+
+def evaluate(test_file, input_length=200, weight_file='ner-classify-albert-tiny-33-0.9731-0.9852.hdf5'):
+    with open(os.path.join(model_save_path, 'keep_words.pkl'), "rb") as f:
+        keep_words = pickle.load(f)
+    with open(os.path.join(model_save_path, 'tokenizer.pkl'), "rb") as f:
+        tokenizer = pickle.load(f)
+
+    with open(os.path.join(model_save_path, 'flag2id.pkl'), "rb") as f:
+        flag2id = pickle.load(f)
+    with open(os.path.join(model_save_path, 'rel2id.pkl'), "rb") as f:
+        rel2id = pickle.load(f)
+    id2rel = {v: k for k, v in rel2id.items()}
+    id2flag = {v: k for k, v in flag2id.items()}
+    print('单词数： {}， 实体类别数：{}， 关系数：{}'.format(len(keep_words), len(flag2id), len(rel2id)))
+    # print('rel2id={}'.format(rel2id))
+
+    model = build_model(keep_words, ner_units=len(flag2id), rel_units=len(rel2id))
+
+    model.load_weights(os.path.join(model_save_path, weight_file), by_name=True,
+                     skip_mismatch=True, reshape=True)
+
+    X1 = []
+    X2 = []
+    results = []
+    data = []
+    ner_count = 0
+    rel_count = 0
+    with open(test_file)as f:
+        for line in f.readlines():
+            line = line.strip()
+            word_flag, rel_tag = [[word.rsplit('/', maxsplit=1) for word in line.rsplit('\t', maxsplit=1)[0].split() if
+                               word[1] == '/'], line.rsplit('\t', maxsplit=1)[-1]]
+            data.append([''.join([word for word, flag in word_flag]), [flag for word, flag in word_flag], rel_tag])
+            if len(data) >= 32:
+                for text, flags, rel_tag in data:
+                    text = text[:input_length]
+                    x1, x2 = tokenizer.encode(text)
+                    X1.append(x1)
+                    X2.append(x2)
+                X1 = seq_padding(X1)
+                X2 = seq_padding(X2)
+                rets = model.predict([X1, X2])
+                ner_labels, rel_labels = rets
+                # print(rets)
+                # print([ret.shape for ret in rets])
+
+                for ner_label, rel_label, (text, flags, rel_tag) in zip(ner_labels, rel_labels, data):
+                    # print(ner_label.shape)
+                    # print(ner_label[-len(text):])
+                    ner_label = [id2flag.get(k.argmax()) for k in ner_label[1:-1]]
+                    # argsort函数返回的是数组值从小到大的索引值
+
+                    rel_label = id2rel.get(rel_label.argmax())
+                    # rel_label = id2rel.get(rel_label.argmax())
+                    results.append([text, ner_label, rel_label, flags, rel_tag])
+                    if all(k==v for k, v in zip(ner_label, flags)):
+                        ner_count += 1
+                    if rel_label == rel_tag:
+                        rel_count += 1
+
+                    if len(results) % 100 == 0:
+                        print('已完成测试量：{}'.format(len(results)))
+                X1 = []
+                X2 = []
+                data = []
+                # print('results={}'.format(results))
+                # sys.exit(0)
+            if len(results) > 20000:
+                print('测试集总量：{}\n命名实体识别正确率：{}\n关系属性识别正确率：{}'.format(len(results), ner_count / len(results),
+                                                                    rel_count / len(results)))
+                sys.exit(0)
+    print('测试集总量：{}\n命名实体识别正确率：{}\n关系属性识别正确率：{}'.format(len(results), ner_count/len(results), rel_count/len(results)))
+
+    return results
 
 def incremental_train(batch_size=16, input_length = 200, filepath='classify-02-0.62-0.831.hdf5'):
     """
@@ -555,7 +637,7 @@ def incremental_train(batch_size=16, input_length = 200, filepath='classify-02-0
     early_stopping = EarlyStopping(monitor='val_loss', patience=3)
 
     model_checkpoint = ModelCheckpoint(filepath=os.path.join(model_save_path,
-                                                             'ner-classify-{epoch:02d}-{ner_out_crf_accuracy:.4f}-{rel_out_acc:.4f}.hdf5'),
+                                                             'ner-classify-{epoch:02d}-{ner_out_crf_accuracy:.4f}-{val_rel_out_accuracy:.4f}.hdf5'),
                                        save_best_only=True, save_weights_only=False)
 
     tb = TensorBoard(log_dir=log_dir,  # log 目录
@@ -585,6 +667,7 @@ def incremental_train(batch_size=16, input_length = 200, filepath='classify-02-0
     print(hist.history.items())
 
 def result_to_json(string, tags):
+    # print('string: {}, tags: {}'.format(string, tags))
     entity_name = ""
     entity_type = ''
     datas = []
@@ -616,7 +699,7 @@ def result_to_json(string, tags):
         datas.append([entity_name, entity_type])
     return datas
 
-def predict(data, input_length=200):
+def predict(data, input_length=200, weight_file='ner-classify-albert-tiny-33-0.9731-0.9852.hdf5'):
     with open(os.path.join(model_save_path, 'keep_words.pkl'), "rb") as f:
         keep_words = pickle.load(f)
     with open(os.path.join(model_save_path, 'tokenizer.pkl'), "rb") as f:
@@ -633,14 +716,14 @@ def predict(data, input_length=200):
 
     model = build_model(keep_words, ner_units=len(flag2id), rel_units=len(rel2id))
 
-    model.load_weights(os.path.join(model_save_path, 'ner-classify-albert-tiny-33-0.9731-0.9852.hdf5'), by_name=True,
+    model.load_weights(os.path.join(model_save_path, weight_file), by_name=True,
                      skip_mismatch=True, reshape=True)
 
     X1 = []
     X2 = []
     for text in data:
         text = text[:input_length]
-        x1, x2 = tokenizer.encode(first=text)
+        x1, x2 = tokenizer.encode(text)
         X1.append(x1)
         X2.append(x2)
     X1 = seq_padding(X1)
@@ -653,7 +736,9 @@ def predict(data, input_length=200):
     for ner_label, rel_label, text in zip(ner_labels, rel_labels, data):
         # print(ner_label.shape)
         # print(ner_label[-len(text):])
-        ner_label = [id2flag.get(k.argmax()) for k in ner_label[-len(text):]]
+        # print('ner_label={}'.format([list(t) for t in ner_label]))
+        # print('id2flag={}'.format(id2flag))
+        ner_label = [id2flag.get(k.argmax()) for k in ner_label[1:-1]]
         # argsort函数返回的是数组值从小到大的索引值
         sort_index = rel_label.argsort()
         rel_label = [id2rel.get(_index) for _index in sort_index[-3:][::-1]]
@@ -668,10 +753,21 @@ def main():
     elif len(sys.argv) > 1 and sys.argv[1] == 'train':
         print('开始训练模型。。。')
         train(batch_size=32, input_length = 200)
+    elif len(sys.argv) > 1 and sys.argv[1] == 'evaluate':
+        if len(sys.argv) > 2:
+            test_file = sys.argv[2]
+        else:
+            test_file = TEST_DATA_PATH
+        evaluate(test_file, input_length=200, weight_file='ner-classify-albert-tiny-14-0.9439-0.9762.hdf5')
     else:
         text = sys.argv[1]
-        ret = predict([text], input_length=200)
+        ret = predict([text], input_length=200, weight_file='ner-classify-albert-tiny-14-0.9439-0.9762.hdf5')
         print("`{}`的命名实体及关系识别的结果：{}".format(text, ret))
 
 if __name__ == '__main__':
     main()
+
+# 中共中央和致公党中央开启的座谈会
+# 朱镕基将要去美国考察
+# 太平洋有多大
+# 珠穆朗玛峰有多高

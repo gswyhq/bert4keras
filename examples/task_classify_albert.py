@@ -322,7 +322,7 @@ def train():
     early_stopping = EarlyStopping(monitor='val_loss', patience=3)
 
     model_checkpoint = ModelCheckpoint(filepath=os.path.join(model_save_path,
-                                                             'classify-{epoch:02d}-{val_loss:.2f}-{val_acc:.3f}.hdf5'),
+                                                             'classify-{epoch:02d}-{val_loss:.2f}-{val_accuracy:.3f}.hdf5'),
                                        save_best_only=True, save_weights_only=False)
 
     tb = TensorBoard(log_dir=log_dir,  # log 目录
@@ -371,7 +371,7 @@ def incremental_train(filepath='classify-02-0.62-0.831.hdf5'):
     early_stopping = EarlyStopping(monitor='val_loss', patience=3)
 
     model_checkpoint = ModelCheckpoint(filepath=os.path.join(model_save_path,
-                                                             'classify-{epoch:02d}-{val_loss:.2f}-{val_acc:.3f}.hdf5'),
+                                                             'classify-{epoch:02d}-{val_loss:.2f}-{val_accuracy:.3f}.hdf5'),
                                        save_best_only=True, save_weights_only=False)
 
     tb = TensorBoard(log_dir=log_dir,  # log 目录
