@@ -42,6 +42,7 @@ sys.path.append('.')
 from config import albert_model_path, config_path, checkpoint_path, dict_path, model_save_path, log_dir, TERM_FREQUENCY_FILE
 from bert4keras.bert import load_pretrained_model, set_gelu
 from bert4keras.utils import SimpleTokenizer, load_vocab
+from neo4j_search import search_entity
 
 set_gelu('tanh') # 切换gelu版本
 
@@ -264,7 +265,7 @@ class Data_set:
 
         return tokenizer, keep_words, flag2id, rel2id
 
-    def data_augmentation(self, word_flag):
+    def data_augmentation(self, word_flag, relationship):
         """
         数据增强，在句首，句中，句末随机插入一些高频词; 转换
         :param word_flag:
@@ -278,15 +279,22 @@ class Data_set:
         current_words = copy.deepcopy(origin_words)
 
         random_num = random.random()
-        if random_num > 0.5:
+        # 60% 替换实体词；20% 调换词序；6.7% 在句首插入随机字符；6.7% 在句中插入随机字符； 6.7% 在句末插入随机字符；
+        if random_num > 0.4 and entity_dict:
+            # neo4j搜索并替换实体词
+            entity_replace_dict = search_entity(entity_dict, relationship)
+            for old_entity, new_entity in sorted(entity_replace_dict.items(), key=lambda x: len(x[0]), reverse=True):
+                text = text.replace(old_entity, new_entity)
+            word_flag = generator_bio_format(text, {entity_replace_dict.get(word, word): flag for word, flag in entity_dict.items()})
+            return word_flag
+        elif random_num > 0.2:
             # 调换词序
             random.shuffle(current_words)
             word_flag = generator_bio_format(''.join(current_words), entity_dict)
             return word_flag
-
-        if random_num <= 0.1666:
+        elif random_num <= 0.0667:
             insert_index = 0
-        elif random_num <= 0.3333:
+        elif random_num <= 0.1333:
             insert_index = len(origin_words)
         else:
             # 若插入在居中，则随机选择一个插入位
@@ -331,7 +339,7 @@ class Data_set:
 
                         if data_type == 'train' and random.random() > 0.2 and input_length - len(word_flag) > 20 and \
                                 any(word for word, flag in word_flag if flag == 'O'):
-                            word_flag = self.data_augmentation(word_flag)
+                            word_flag = self.data_augmentation(word_flag, rel_tag)
                             # print('数据增强的结果：{}'.format([[word for word, flag in word_flag], [flag for word, flag in word_flag]]))
 
                         # print('word_flag={}'.format(word_flag))
@@ -625,7 +633,7 @@ def predict(data, input_length=200):
 
     model = build_model(keep_words, ner_units=len(flag2id), rel_units=len(rel2id))
 
-    model.load_weights(os.path.join(model_save_path, 'ner-classify-albert-tiny-13-0.9553-0.9779.hdf5'), by_name=True,
+    model.load_weights(os.path.join(model_save_path, 'ner-classify-albert-tiny-33-0.9731-0.9852.hdf5'), by_name=True,
                      skip_mismatch=True, reshape=True)
 
     X1 = []
