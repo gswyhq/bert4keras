@@ -284,22 +284,28 @@ class Data_set:
         current_words = copy.deepcopy(origin_words)
 
         random_num = random.random()
-        # 60% 替换实体词；20% 调换词序；6.7% 在句首插入随机字符；6.7% 在句中插入随机字符； 6.7% 在句末插入随机字符；
-        if random_num > 0.4 and entity_dict:
+        # 20% 替换实体词；15% 替换实体词并调换次序；20% 调换词序；15% 在句首插入随机字符；15% 在句中插入随机字符； 15% 在句末插入随机字符；
+        if random_num > 0.65 and entity_dict:
             # neo4j搜索并替换实体词
             entity_replace_dict = search_entity(entity_dict, relationship)
-            for old_entity, new_entity in sorted(entity_replace_dict.items(), key=lambda x: len(x[0]), reverse=True):
-                text = text.replace(old_entity, new_entity)
-            word_flag = generator_bio_format(text, {entity_replace_dict.get(word, word): flag for word, flag in entity_dict.items()})
+            if random_num > 0.8:
+                for old_entity, new_entity in sorted(entity_replace_dict.items(), key=lambda x: len(x[0]), reverse=True):
+                    text = text.replace(old_entity, new_entity)
+                word_flag = generator_bio_format(text, {entity_replace_dict.get(word, word): flag for word, flag in entity_dict.items()})
+            else:
+                current_words = [entity_replace_dict.get(word, word) for word in current_words]
+                # 调换词序
+                random.shuffle(current_words)
+                word_flag = generator_bio_format(''.join(current_words), {entity_replace_dict.get(word, word): flag for word, flag in entity_dict.items()})
             return word_flag
-        elif random_num > 0.2:
+        elif random_num > 0.45:
             # 调换词序
             random.shuffle(current_words)
             word_flag = generator_bio_format(''.join(current_words), entity_dict)
             return word_flag
-        elif random_num <= 0.0667:
+        elif random_num <= 0.15:
             insert_index = 0
-        elif random_num <= 0.1333:
+        elif random_num <= 0.3:
             insert_index = len(origin_words)
         else:
             # 若插入在居中，则随机选择一个插入位
@@ -476,6 +482,7 @@ def build_model(keep_words, ner_units=None, rel_units=None):
 
     model = Model(model.input, outputs=[ner_out, rel_out])
     # model.compile(optimizer='rmsprop', loss='binary_crossentropy', loss_weights=[1., 0.2])
+    # lr不能太低，如：5e-7，太低了，反而会使模型训练还没达到最优就提前终止了；
     model.compile(optimizer=Adam(lr=5e-6),
                   loss={'ner_out': crf_loss, 'rel_out': 'categorical_crossentropy'},
                   metrics = {'ner_out': crf_accuracy, 'rel_out': 'accuracy'},
@@ -593,15 +600,20 @@ def evaluate(test_file, input_length=200, weight_file='ner-classify-albert-tiny-
 
                     if len(results) % 100 == 0:
                         print('已完成测试量：{}'.format(len(results)))
+
+                    if len(results) % 1000 == 0:
+                        print('测试集总量：{}\n命名实体识别正确率：{}\n关系属性识别正确率：{}'.format(len(results), ner_count / len(results),
+                                                                            rel_count / len(results)))
+
                 X1 = []
                 X2 = []
                 data = []
                 # print('results={}'.format(results))
                 # sys.exit(0)
-            if len(results) > 20000:
-                print('测试集总量：{}\n命名实体识别正确率：{}\n关系属性识别正确率：{}'.format(len(results), ner_count / len(results),
-                                                                    rel_count / len(results)))
+
+            if len(results) > 50000:
                 sys.exit(0)
+
     print('测试集总量：{}\n命名实体识别正确率：{}\n关系属性识别正确率：{}'.format(len(results), ner_count/len(results), rel_count/len(results)))
 
     return results
@@ -758,10 +770,10 @@ def main():
             test_file = sys.argv[2]
         else:
             test_file = TEST_DATA_PATH
-        evaluate(test_file, input_length=200, weight_file='ner-classify-albert-tiny-14-0.9439-0.9762.hdf5')
+        evaluate(test_file, input_length=200, weight_file='ner-classify-albert-tiny-14-0.9336-0.9762.hdf5')
     else:
         text = sys.argv[1]
-        ret = predict([text], input_length=200, weight_file='ner-classify-albert-tiny-14-0.9439-0.9762.hdf5')
+        ret = predict([text], input_length=200, weight_file='ner-classify-albert-tiny-14-0.9336-0.9762.hdf5')
         print("`{}`的命名实体及关系识别的结果：{}".format(text, ret))
 
 if __name__ == '__main__':
@@ -771,3 +783,5 @@ if __name__ == '__main__':
 # 朱镕基将要去美国考察
 # 太平洋有多大
 # 珠穆朗玛峰有多高
+# 命名实体识别正确率：0.6689859245041587
+# 关系属性识别正确率：0.9870641394753679
