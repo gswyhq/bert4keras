@@ -3,6 +3,12 @@
 
 import os
 
+ES_HOST = os.getenv('ES_HOST', '192.168.3.105')
+ES_PORT = os.getenv('ES_PORT', '9200')
+ES_USER = os.getenv('ES_USER', 'elastic')
+ES_PASSWORD = os.getenv('ES_PASSWORD', 'changeme')
+ES_TIMEOUT = (0.5, 10)
+
 # albert_config_large.json  albert_model.ckpt.data-00000-of-00001  albert_model.ckpt.index  albert_model.ckpt.meta  checkpoint  vocab.txt
 # albert_model_path = './albert_large_zh'
 albert_model_path = './albert_tiny'

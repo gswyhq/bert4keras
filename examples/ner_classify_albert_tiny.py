@@ -19,7 +19,7 @@ import jieba
 from keras.preprocessing.sequence import pad_sequences
 from keras import Sequential
 from keras_contrib.layers import CRF
-from keras_contrib.metrics import crf_accuracy
+from keras_contrib.metrics import crf_accuracy, crf_viterbi_accuracy
 from keras_contrib.losses import crf_loss
 from keras.layers import Embedding, Bidirectional, LSTM, Lambda, Dropout, TimeDistributed
 from keras.models import load_model
@@ -60,7 +60,7 @@ set_session(tf.Session(config=tf_config))
 # TAG_SCHEME = 'BIO'
 TAG_SCHEME = 'BIOES'
 
-model_save_path = './models_ner_classify_albert_tiny'
+model_save_path = './models_ner_classify_albert_tiny20191101_1356'
 if TAG_SCHEME == 'BIO':
     TRAIN_DATA_PATH = "./data/ner_rel_train.txt"
     DEV_DATA_PATH = "./data/ner_rel_dev.txt"
@@ -284,28 +284,50 @@ class Data_set:
         current_words = copy.deepcopy(origin_words)
 
         random_num = random.random()
-        # 20% 替换实体词；15% 替换实体词并调换次序；20% 调换词序；15% 在句首插入随机字符；15% 在句中插入随机字符； 15% 在句末插入随机字符；
-        if random_num > 0.65 and entity_dict:
+        # 60% 替换实体词；20% 调换词序；6.7% 在句首插入随机字符；6.7% 在句中插入随机字符； 6.7% 在句末插入随机字符； acc 71%
+        # 20% 替换实体词；15% 替换实体词并调换次序；20% 调换词序；15% 在句首插入随机字符；15% 在句中插入随机字符； 15% 在句末插入随机字符；acc 66%
+        # 5% 替换实体词；10% 替换实体词并调换词序；25% 替换实体词、插入随机词并调换词序；20% 替换实体词并随机插入； 5% 调换词序；15% 在句首插入随机字符；10% 在句中插入随机字符； 10% 在句末插入随机字符；acc 74%
+        # 5% 替换实体词；10% 替换实体词并调换词序；35% 替换实体词、插入随机词并调换词序；20% 替换实体词并随机插入； 5% 调换词序；15% 在句首插入随机字符；5% 在句中插入随机字符； 5% 在句末插入随机字符；acc 70%
+
+        if random_num > 0.30 and entity_dict:
             # neo4j搜索并替换实体词
             entity_replace_dict = search_entity(entity_dict, relationship)
-            if random_num > 0.8:
+            if random_num > 0.95:
+                # 替换实体词
                 for old_entity, new_entity in sorted(entity_replace_dict.items(), key=lambda x: len(x[0]), reverse=True):
                     text = text.replace(old_entity, new_entity)
                 word_flag = generator_bio_format(text, {entity_replace_dict.get(word, word): flag for word, flag in entity_dict.items()})
-            else:
+            elif random_num > 0.85:
+                # 替换实体词并调换词序
                 current_words = [entity_replace_dict.get(word, word) for word in current_words]
-                # 调换词序
                 random.shuffle(current_words)
                 word_flag = generator_bio_format(''.join(current_words), {entity_replace_dict.get(word, word): flag for word, flag in entity_dict.items()})
+            elif random_num > 0.50:
+                # 替换实体词、插入随机词并调换词序
+                random_word = random_weight(self.words_weight_data, key_list=self.words_key_list,
+                                            total=self.words_total)
+                current_words = [entity_replace_dict.get(word, word) for word in current_words] + [random_word]
+                random.shuffle(current_words)
+                word_flag = generator_bio_format(''.join(current_words), {entity_replace_dict.get(word, word): flag for word, flag in entity_dict.items()})
+            else:
+                # 替换实体词，随机插入；
+                random_word = random_weight(self.words_weight_data, key_list=self.words_key_list,
+                                            total=self.words_total)
+                current_words = [entity_replace_dict.get(word, word) for word in current_words]
+                # 句首，句中，句末插入概率差不多；
+                insert_index = random.choice([0] * 2 * len(current_words) + [i for i in range(len(current_words))] + [len(current_words)] * len(current_words))
+                current_words.insert(insert_index, random_word)
+                word_flag = generator_bio_format(''.join(current_words), {entity_replace_dict.get(word, word): flag for word, flag in entity_dict.items()})
+
             return word_flag
-        elif random_num > 0.45:
+        elif random_num > 0.25:
             # 调换词序
             random.shuffle(current_words)
             word_flag = generator_bio_format(''.join(current_words), entity_dict)
             return word_flag
-        elif random_num <= 0.15:
+        elif random_num > 0.1:
             insert_index = 0
-        elif random_num <= 0.3:
+        elif random_num > 0.05:
             insert_index = len(origin_words)
         else:
             # 若插入在居中，则随机选择一个插入位
@@ -485,7 +507,7 @@ def build_model(keep_words, ner_units=None, rel_units=None):
     # lr不能太低，如：5e-7，太低了，反而会使模型训练还没达到最优就提前终止了；
     model.compile(optimizer=Adam(lr=5e-6),
                   loss={'ner_out': crf_loss, 'rel_out': 'categorical_crossentropy'},
-                  metrics = {'ner_out': crf_accuracy, 'rel_out': 'accuracy'},
+                  metrics = {'ner_out': crf_viterbi_accuracy, 'rel_out': 'accuracy'},
                   loss_weights={'ner_out': 0.5, 'rel_out': 0.5}
                   )
     model.summary()
@@ -511,7 +533,7 @@ def train(batch_size=32, input_length = 200, epochs=EPOCHS):
     early_stopping = EarlyStopping(monitor='val_loss', patience=3)
 
     model_checkpoint = ModelCheckpoint(filepath=os.path.join(model_save_path,
-                                                             'ner-classify-albert-tiny-{epoch:02d}-{ner_out_crf_accuracy:.4f}-{val_rel_out_accuracy:.4f}.hdf5'),
+                                                             'ner-classify-albert-tiny-{epoch:02d}-{ner_out_crf_viterbi_accuracy:.4f}-{rel_out_acc:.4f}.hdf5'),
                                        save_best_only=True, save_weights_only=False)
 
     tb = TensorBoard(log_dir=log_dir,  # log 目录
@@ -593,7 +615,7 @@ def evaluate(test_file, input_length=200, weight_file='ner-classify-albert-tiny-
                     rel_label = id2rel.get(rel_label.argmax())
                     # rel_label = id2rel.get(rel_label.argmax())
                     results.append([text, ner_label, rel_label, flags, rel_tag])
-                    if all(k==v for k, v in zip(ner_label, flags)):
+                    if all(k[0]==v[0] for k, v in zip(ner_label, flags)):
                         ner_count += 1
                     if rel_label == rel_tag:
                         rel_count += 1
@@ -649,7 +671,7 @@ def incremental_train(batch_size=16, input_length = 200, filepath='classify-02-0
     early_stopping = EarlyStopping(monitor='val_loss', patience=3)
 
     model_checkpoint = ModelCheckpoint(filepath=os.path.join(model_save_path,
-                                                             'ner-classify-{epoch:02d}-{ner_out_crf_accuracy:.4f}-{val_rel_out_accuracy:.4f}.hdf5'),
+                                                             'ner-classify-{epoch:02d}-{ner_out_crf_viterbi_accuracy:.4f}-{rel_out_acc:.4f}.hdf5'),
                                        save_best_only=True, save_weights_only=False)
 
     tb = TensorBoard(log_dir=log_dir,  # log 目录
@@ -751,6 +773,7 @@ def predict(data, input_length=200, weight_file='ner-classify-albert-tiny-33-0.9
         # print('ner_label={}'.format([list(t) for t in ner_label]))
         # print('id2flag={}'.format(id2flag))
         ner_label = [id2flag.get(k.argmax()) for k in ner_label[1:-1]]
+        # print(ner_label)
         # argsort函数返回的是数组值从小到大的索引值
         sort_index = rel_label.argsort()
         rel_label = [id2rel.get(_index) for _index in sort_index[-3:][::-1]]
@@ -770,10 +793,10 @@ def main():
             test_file = sys.argv[2]
         else:
             test_file = TEST_DATA_PATH
-        evaluate(test_file, input_length=200, weight_file='ner-classify-albert-tiny-14-0.9336-0.9762.hdf5')
+        evaluate(test_file, input_length=200, weight_file='ner-classify-albert-tiny-34-0.9465-0.9790.hdf5')
     else:
         text = sys.argv[1]
-        ret = predict([text], input_length=200, weight_file='ner-classify-albert-tiny-14-0.9336-0.9762.hdf5')
+        ret = predict([text], input_length=200, weight_file='ner-classify-albert-tiny-34-0.9465-0.9790.hdf5')
         print("`{}`的命名实体及关系识别的结果：{}".format(text, ret))
 
 if __name__ == '__main__':
