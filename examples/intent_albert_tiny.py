@@ -29,7 +29,7 @@ from keras.layers import Input, Embedding, LSTM, Dense, Layer
 import keras.backend as K
 from keras.layers.normalization import BatchNormalization
 from keras.models import Model
-import keras
+import time
 from keras.utils.np_utils import to_categorical
 from keras.utils import plot_model
 import tensorflow as tf
@@ -217,72 +217,34 @@ class Data_set:
 
         return tokenizer, keep_words, word2id, rel2id
 
-    # def data_augmentation(self, word_flag, relationship):
-    #     """
-    #     数据增强，在句首，句中，句末随机插入一些高频词; 转换
-    #     :param word_flag:
-    #     :return:
-    #     """
-    #     text = ''.join([t[0] for t in word_flag])
-    #     entity_dict = {word: flag for word, flag in result_to_json(text, [t[1] for t in word_flag])}
-    #
-    #     [jieba.add_word(word, freq=2000, tag=flag) for word, flag in entity_dict.items()]
-    #     origin_words = [word for word in jieba.cut(text)]
-    #     current_words = copy.deepcopy(origin_words)
-    #
-    #     random_num = random.random()
-    #     # 60% 替换实体词；20% 调换词序；6.7% 在句首插入随机字符；6.7% 在句中插入随机字符； 6.7% 在句末插入随机字符； acc 71%
-    #     # 20% 替换实体词；15% 替换实体词并调换次序；20% 调换词序；15% 在句首插入随机字符；15% 在句中插入随机字符； 15% 在句末插入随机字符；acc 66%
-    #     # 5% 替换实体词；10% 替换实体词并调换词序；25% 替换实体词、插入随机词并调换词序；20% 替换实体词并随机插入； 5% 调换词序；15% 在句首插入随机字符；10% 在句中插入随机字符； 10% 在句末插入随机字符；acc 74%
-    #     # 5% 替换实体词；10% 替换实体词并调换词序；35% 替换实体词、插入随机词并调换词序；20% 替换实体词并随机插入； 5% 调换词序；15% 在句首插入随机字符；5% 在句中插入随机字符； 5% 在句末插入随机字符；acc 70%
-    #
-    #     if random_num > 0.30 and entity_dict:
-    #         # neo4j搜索并替换实体词
-    #         entity_replace_dict = search_entity(entity_dict, relationship)
-    #         if random_num > 0.95:
-    #             # 替换实体词
-    #             for old_entity, new_entity in sorted(entity_replace_dict.items(), key=lambda x: len(x[0]), reverse=True):
-    #                 text = text.replace(old_entity, new_entity)
-    #             word_flag = generator_bio_format(text, {entity_replace_dict.get(word, word): flag for word, flag in entity_dict.items()})
-    #         elif random_num > 0.85:
-    #             # 替换实体词并调换词序
-    #             current_words = [entity_replace_dict.get(word, word) for word in current_words]
-    #             random.shuffle(current_words)
-    #             word_flag = generator_bio_format(''.join(current_words), {entity_replace_dict.get(word, word): flag for word, flag in entity_dict.items()})
-    #         elif random_num > 0.50:
-    #             # 替换实体词、插入随机词并调换词序
-    #             random_word = random_weight(self.words_weight_data, key_list=self.words_key_list,
-    #                                         total=self.words_total)
-    #             current_words = [entity_replace_dict.get(word, word) for word in current_words] + [random_word]
-    #             random.shuffle(current_words)
-    #             word_flag = generator_bio_format(''.join(current_words), {entity_replace_dict.get(word, word): flag for word, flag in entity_dict.items()})
-    #         else:
-    #             # 替换实体词，随机插入；
-    #             random_word = random_weight(self.words_weight_data, key_list=self.words_key_list,
-    #                                         total=self.words_total)
-    #             current_words = [entity_replace_dict.get(word, word) for word in current_words]
-    #             # 句首，句中，句末插入概率差不多；
-    #             insert_index = random.choice([0] * 2 * len(current_words) + [i for i in range(len(current_words))] + [len(current_words)] * len(current_words))
-    #             current_words.insert(insert_index, random_word)
-    #             word_flag = generator_bio_format(''.join(current_words), {entity_replace_dict.get(word, word): flag for word, flag in entity_dict.items()})
-    #
-    #         return word_flag
-    #     elif random_num > 0.25:
-    #         # 调换词序
-    #         random.shuffle(current_words)
-    #         word_flag = generator_bio_format(''.join(current_words), entity_dict)
-    #         return word_flag
-    #     elif random_num > 0.1:
-    #         insert_index = 0
-    #     elif random_num > 0.05:
-    #         insert_index = len(origin_words)
-    #     else:
-    #         # 若插入在居中，则随机选择一个插入位
-    #         insert_index = random.randint(0, len(origin_words))
-    #     random_word = random_weight(self.words_weight_data, key_list=self.words_key_list, total=self.words_total)
-    #     insert_text = ''.join(origin_words[:insert_index] + [random_word] + origin_words[insert_index:])
-    #     word_flag = generator_bio_format(insert_text, entity_dict)
-    #     return word_flag
+    def data_augmentation(self, text):
+        """
+        数据增强，在句首，句中，句末随机插入一些高频词; 转换
+        :param text:
+        :return:
+        """
+
+        origin_words = [word for word in jieba.cut(text)]
+        current_words = copy.deepcopy(origin_words)
+
+        random_num = random.random()
+
+        if random_num > 0.75:
+            # 调换词序
+            random.shuffle(current_words)
+            text = ''.join(current_words)
+            return text
+        elif random_num > 0.5:
+            insert_index = 0
+        elif random_num > 0.25:
+            insert_index = len(origin_words)
+        else:
+            # 若插入在居中，则随机选择一个插入位
+            insert_index = random.randint(0, len(origin_words))
+        random_word = random_weight(self.words_weight_data, key_list=self.words_key_list, total=self.words_total)
+        text = ''.join(origin_words[:insert_index] + [random_word] + origin_words[insert_index:])
+
+        return text
 
     def batch_generator(self, data_file, batch_size=32, input_length=200):
         X1, X2 = [], []
@@ -291,7 +253,7 @@ class Data_set:
         # self.id2word = {v: k for k, v in self.word2id.items()}
         while True:
             temp_data_file = '{}.temp'.format(data_file)
-            command = 'less {} | sort |uniq | shuf -o {}'.format(data_file, temp_data_file)
+            command = 'ldconfig && less {} | sort |uniq | shuf -o {}'.format(data_file, temp_data_file)
             os.system(command)
             with open(temp_data_file, "r") as f:
                 line = f.readline()
@@ -316,10 +278,9 @@ class Data_set:
                         else:
                             class_weight_count[rel_tag] += 1
 
-                        # if data_type == 'train' and random.random() > 0.2 and input_length - len(word_flag) > 20 and \
-                        #         any(word for word, flag in word_flag if flag == 'O'):
-                        #     word_flag = self.data_augmentation(word_flag, rel_tag)
-                        #     # print('数据增强的结果：{}'.format([[word for word, flag in word_flag], [flag for word, flag in word_flag]]))
+                        if random.random() > 0.8:
+                            text = self.data_augmentation(text)
+                            # print('数据增强的结果：{}'.format([[word for word, flag in word_flag], [flag for word, flag in word_flag]]))
 
                         # print('word_flag={}'.format(word_flag))
                         # batch_text.append([self.word2id.get(word, 0)  for word, flag in word_flag])
@@ -349,7 +310,7 @@ class Data_set:
                     Y_REL = []
 
             os.system('rm {}'.format(temp_data_file))
-
+            time.sleep(3)
 
 class Attention(Layer):
     def __init__(self, output_dim, **kwargs):
@@ -685,7 +646,7 @@ def main():
         evaluate(test_file, input_length=200, weight_file='intent-albert-tiny-34-0.9465-0.9790.hdf5')
     else:
         text = sys.argv[1]
-        ret = predict([text], input_length=200, weight_file='intent-albert-tiny-29-0.9940-0.9476.hdf5')
+        ret = predict([text], input_length=200, weight_file='intent-albert-tiny-34-0.9835-0.9446.hdf5')
         print("`{}`的命名实体及关系识别的结果：{}".format(text, ret))
 
 if __name__ == '__main__':
