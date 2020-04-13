@@ -65,7 +65,7 @@ def generator_baoxian_triple(input_file, output_file):
     os.system('rm {}'.format(temp_data_file))
 
     datas = [t.strip().rsplit('\t', maxsplit=1) for t in datas if '\t' in t]
-    with open('/home/gswyhq/data/admin_bussiness_site_webot_ai_19_kg_entity_synonyms_20191106_170150.json')as f:
+    with open('/home/gswyhq/data/admin_bussiness_site_web1_ai_19_kg_entity_synonyms_20191106_170150.json')as f:
         kg_entity_synonyms = json.load(f)
     hits = kg_entity_synonyms.get('hits', {}).get('hits', [])
     _source = [t['_source'] for t in hits]
